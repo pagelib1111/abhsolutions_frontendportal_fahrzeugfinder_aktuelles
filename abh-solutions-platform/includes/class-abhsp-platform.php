@@ -191,6 +191,7 @@ final class ABHSP_Platform {
 
     public function settings_menu() {
         add_options_page('ABH Solutions Plattform', 'ABH Solutions', 'manage_options', 'abhsp-settings', array($this, 'settings_page'));
+        add_submenu_page(null, 'ABH Einreichung prüfen', 'ABH Einreichung prüfen', 'edit_posts', 'abhsp-review', array($this, 'review_page'));
     }
 
     public function register_settings() {
@@ -353,7 +354,7 @@ final class ABHSP_Platform {
         update_post_meta($submission_id, '_abhsp_image_id', absint($image_id));
         update_post_meta($submission_id, '_abhsp_review_state', 'pending');
         $moderation = sanitize_email(get_option('abhsp_moderation_email', get_option('admin_email')));
-        $review_url = admin_url('post.php?post=' . absint($submission_id) . '&action=edit');
+        $review_url = admin_url('admin.php?page=abhsp-review&submission=' . absint($submission_id));
         $action_label = $target_id ? 'Änderung' : 'Neue Einreichung';
         $subject = $action_label . ' zur ABH-Freigabe: ' . $title;
         $message = '<div style="font-family:Arial,sans-serif;color:#14233f;max-width:640px"><div style="background:#005eab;padding:18px 24px;color:#fff;font-size:18px;font-weight:bold">ABH SOLUTIONS · FREIGABE</div><div style="padding:24px;border:1px solid #e3e9f0"><p>' . esc_html($action_label) . ' wartet auf Prüfung.</p><p><strong>Typ:</strong> ' . esc_html($type === 'vehicle' ? 'Fahrzeug' : 'Aktuelles') . '<br><strong>Hersteller:</strong> ' . esc_html(get_the_title($manufacturer_id ?: absint(get_post_meta($target_id, '_abhsp_manufacturer_id', true)))) . '<br><strong>Titel:</strong> ' . esc_html($title) . '</p><p>' . nl2br(esc_html($summary)) . '</p><p><a style="display:inline-block;background:#005eab;color:#fff;text-decoration:none;padding:12px 18px;font-weight:bold" href="' . esc_url($review_url) . '">Einreichung prüfen</a></p></div></div>';
@@ -367,21 +368,50 @@ final class ABHSP_Platform {
     public function submission_metabox($post) {
         if (!current_user_can('edit_post', $post->ID)) { echo '<p>Keine Berechtigung.</p>'; return; }
         $type = get_post_meta($post->ID, '_abhsp_type', true);
-        $payload = get_post_meta($post->ID, '_abhsp_payload', true);
-        $payload = is_array($payload) ? $payload : array();
+        $manufacturer_id = absint(get_post_meta($post->ID, '_abhsp_manufacturer_id', true));
         $target_id = absint(get_post_meta($post->ID, '_abhsp_target_id', true));
         $action_label = $target_id ? 'Änderung eines bestehenden Eintrags' : 'Neue Einreichung';
-        echo '<p><strong>Aktion:</strong> ' . esc_html($action_label) . ($target_id ? '<br><strong>Bestehender Eintrag:</strong> <a href="' . esc_url(get_edit_post_link($target_id)) . '">' . esc_html(get_the_title($target_id)) . '</a>' : '') . '<br><strong>Typ:</strong> ' . esc_html($type === 'vehicle' ? 'Fahrzeug' : 'Aktuelles') . '<br><strong>Hersteller:</strong> ' . esc_html(get_the_title(absint(get_post_meta($post->ID, '_abhsp_manufacturer_id', true)))) . '</p>';
-        echo '<p><strong>Kurzbeschreibung</strong><br>' . esc_html(get_post_meta($post->ID, '_abhsp_summary', true)) . '</p>';
-        foreach ($payload as $key=>$value) if ($key !== 'details' && $key !== 'summary') echo '<p><strong>' . esc_html(ucwords(str_replace('_',' ',$key))) . ':</strong> ' . esc_html(is_scalar($value) ? (string)$value : '') . '</p>';
-        if (!empty($payload['details'])) echo '<p><strong>Details</strong><br>' . nl2br(esc_html($payload['details'])) . '</p>';
-        $state = get_post_meta($post->ID, '_abhsp_review_state', true);
-        echo '<p><strong>Freigabestatus:</strong> ' . esc_html($state ?: 'pending') . '</p>';
-        if ($post->post_status === 'pending') {
-            $approve = wp_nonce_url(admin_url('admin-post.php?action=abhsp_review_submission&decision=approve&submission=' . $post->ID), 'abhsp_review_' . $post->ID);
-            $changes = wp_nonce_url(admin_url('admin-post.php?action=abhsp_review_submission&decision=changes&submission=' . $post->ID), 'abhsp_review_' . $post->ID);
-            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="abhsp_review_submission"><input type="hidden" name="decision" value="approve"><input type="hidden" name="submission" value="' . esc_attr($post->ID) . '"><input type="hidden" name="_wpnonce" value="' . esc_attr(wp_create_nonce('abhsp_review_' . $post->ID)) . '"><p><button class="button button-primary" type="submit">Freigeben & veröffentlichen</button></p></form><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="abhsp_review_submission"><input type="hidden" name="decision" value="changes"><input type="hidden" name="submission" value="' . esc_attr($post->ID) . '"><input type="hidden" name="_wpnonce" value="' . esc_attr(wp_create_nonce('abhsp_review_' . $post->ID)) . '"><p><label for="abhsp_change_note">Hinweis an Hersteller</label><textarea id="abhsp_change_note" class="widefat" name="note" rows="3" placeholder="Was soll angepasst werden?"></textarea></p><p><button class="button" type="submit">Änderung anfordern</button></p></form>';
+        echo '<p><strong>Aktion:</strong> ' . esc_html($action_label) . '<br><strong>Typ:</strong> ' . esc_html($type === 'vehicle' ? 'Fahrzeug' : 'Aktuelles') . '<br><strong>Hersteller:</strong> ' . esc_html(get_the_title($manufacturer_id)) . '</p>';
+        if ($target_id) echo '<p><strong>Bestehender Eintrag:</strong> <a href="' . esc_url(get_edit_post_link($target_id)) . '">' . esc_html(get_the_title($target_id)) . '</a></p>';
+        echo '<p><strong>Freigabestatus:</strong> ' . esc_html(get_post_meta($post->ID, '_abhsp_review_state', true) ?: 'pending') . '</p>';
+        $url = add_query_arg(array('page'=>'abhsp-review','submission'=>$post->ID), admin_url('admin.php'));
+        echo '<p><a class="button button-primary" href="' . esc_url($url) . '">Einreichung prüfen</a></p>';
+        echo '<p class="description">Öffnen Sie die Prüfseite, um die vollständige Vorschau anzusehen, freizugeben oder Änderungen anzufordern.</p>';
+    }
+
+    public function review_page() {
+        $id = absint($_GET['submission'] ?? 0);
+        $post = $id ? get_post($id) : null;
+        if (!$post || $post->post_type !== 'abh_submission' || !current_user_can('edit_post', $id)) wp_die('Sie dürfen diese Einreichung nicht prüfen.');
+        $type = get_post_meta($id, '_abhsp_type', true);
+        $manufacturer_id = absint(get_post_meta($id, '_abhsp_manufacturer_id', true));
+        $target_id = absint(get_post_meta($id, '_abhsp_target_id', true));
+        $payload = get_post_meta($id, '_abhsp_payload', true);
+        $payload = is_array($payload) ? $payload : array();
+        echo '<div class="wrap"><h1>ABH-Einreichung prüfen</h1><p><strong>Aktion:</strong> ' . esc_html($target_id ? 'Änderung eines bestehenden Eintrags' : 'Neue Einreichung') . ' · <strong>Typ:</strong> ' . esc_html($type === 'vehicle' ? 'Fahrzeug' : 'Aktuelles') . '</p>';
+        echo '<div style="max-width:900px;background:#fff;border:1px solid #dcdcde;padding:24px;margin:20px 0"><p><strong>Hersteller:</strong> ' . esc_html(get_the_title($manufacturer_id)) . '</p>';
+        if ($target_id) echo '<p><strong>Bestehender Eintrag:</strong> <a href="' . esc_url(get_permalink($target_id)) . '" target="_blank" rel="noopener">' . esc_html(get_the_title($target_id)) . '</a></p>';
+        echo '<h2>' . esc_html($post->post_title) . '</h2><p>' . nl2br(esc_html(get_post_meta($id, '_abhsp_summary', true))) . '</p>';
+        if ($type === 'vehicle') {
+            echo '<p><strong>Fahrzeugart:</strong> ' . esc_html($payload['vehicle_type'] ?? '') . ' · <strong>Aufbauart:</strong> ' . esc_html($payload['body_type'] ?? '') . '</p>';
+            echo '<p><strong>Einsatzbereich:</strong> ' . esc_html($payload['application'] ?? '') . ' · <strong>Basisfahrzeug:</strong> ' . esc_html($payload['base_vehicle'] ?? '') . '</p>';
+            echo '<p><strong>Standort:</strong> ' . esc_html($payload['location'] ?? '') . ' · <strong>Nutzlast:</strong> ' . esc_html($payload['payload'] ?? '') . '</p>';
+            echo '<p><strong>Status:</strong> ' . esc_html($payload['availability'] ?? '') . ' · <strong>Startseite:</strong> ' . (!empty($payload['feature_home']) ? 'vorgemerkt' : 'nein') . '</p>';
+            $image_id = absint(get_post_meta($id, '_abhsp_image_id', true));
+            if ($image_id) echo '<div style="max-width:420px">' . wp_get_attachment_image($image_id, 'large', false, array('style'=>'width:100%;height:auto')) . '</div>';
+        } else {
+            echo '<p><strong>Thema:</strong> ' . esc_html($payload['news_kind'] ?? '') . ' · <strong>Termin:</strong> ' . esc_html($payload['event_date'] ?? '') . ' · <strong>Ort:</strong> ' . esc_html($payload['event_location'] ?? '') . '</p>';
         }
+        if (!empty($payload['details'])) echo '<h3>Weitere Informationen</h3><p>' . nl2br(esc_html($payload['details'])) . '</p>';
+        echo '</div>';
+        if ($post->post_status === 'pending') {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="max-width:900px;background:#fff;border:1px solid #dcdcde;padding:24px">';
+            wp_nonce_field('abhsp_review_' . $id);
+            echo '<input type="hidden" name="action" value="abhsp_review_submission"><input type="hidden" name="submission" value="' . esc_attr($id) . '"><label for="abhsp_review_note"><strong>Hinweis bei Änderungsbedarf</strong></label><textarea id="abhsp_review_note" class="large-text" name="note" rows="4" placeholder="Beschreiben Sie, was der Hersteller noch anpassen soll."></textarea><p class="submit"><button class="button button-primary" type="submit" name="decision" value="approve">Freigeben & veröffentlichen</button> <button class="button" type="submit" name="decision" value="changes">Änderungen anfordern</button></p></form>';
+        } else {
+            echo '<p>Diese Einreichung wurde bereits bearbeitet.</p>';
+        }
+        echo '<p><a href="' . esc_url(admin_url('edit.php?post_type=abh_submission')) . '">← Zurück zur Einreichungsliste</a></p></div>';
     }
 
     public function review_submission() {
@@ -427,8 +457,10 @@ final class ABHSP_Platform {
             wp_update_post(array('ID'=>$id,'post_status'=>'publish'));
             $this->notify_submitter($id, 'approved', '');
         } elseif ($decision === 'changes') {
+            $review_note = sanitize_textarea_field(wp_unslash($_POST['note'] ?? ''));
+            if (!$review_note) wp_die('Bitte geben Sie einen Hinweis für den Hersteller ein.');
             update_post_meta($id, '_abhsp_review_state', 'changes');
-            update_post_meta($id, '_abhsp_review_note', sanitize_textarea_field(wp_unslash($_POST['note'] ?? '')));
+            update_post_meta($id, '_abhsp_review_note', $review_note);
             $this->notify_submitter($id, 'changes', get_post_meta($id, '_abhsp_review_note', true));
         }
         wp_safe_redirect(admin_url('edit.php?post_type=abh_submission'));
