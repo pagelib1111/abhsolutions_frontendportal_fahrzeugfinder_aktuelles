@@ -191,6 +191,7 @@
       setStep(form,1);
       try{
         var key=form.getAttribute('data-draft-key');var saved=key?JSON.parse(localStorage.getItem(key)||'null'):null;
+        if(new URLSearchParams(window.location.search).get('abhsp_sent')==='1'&&key){localStorage.removeItem(key);saved=null;}
         if(saved&&saved.fields){var restore=form.querySelector('[data-abh-restore-draft]');if(restore)restore.hidden=false;var status=form.querySelector('[data-abh-autosave-status]');if(status)status.textContent='Ein lokaler Entwurf vom '+new Date(saved.savedAt).toLocaleString('de-DE')+' ist verfügbar.';}
       }catch(error){}
     });
@@ -202,9 +203,4 @@
     if(!type||!type.value){
       event.preventDefault();
       setStep(form,1,true);
-      if(type){type.focus();type.setCustomValidity('Bitte wählen Sie zuerst Fahrzeug oder Aktuelles aus.');type.reportValidity();}
-      return;
-    }
-    try{localStorage.removeItem(form.getAttribute('data-draft-key'));}catch(error){}
-  });
-})();
+      if(type){type.focus();type.setCustomValidity('Bitte wählen Sie zuerst Fahrzeug oder Aktuelles aus.');type.reportVal
