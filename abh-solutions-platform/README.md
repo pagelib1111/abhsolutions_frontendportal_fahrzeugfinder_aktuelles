@@ -1,35 +1,39 @@
 # ABH Solutions Plattform
 
-WordPress plugin foundation for the ABH Solutions vehicle finder, manufacturer news and partner portal.
+WordPress plugin for the ABH Solutions vehicle finder, manufacturer news and partner portal.
 
-## Current development scope
+## Current scope
 
-- One plugin with shared manufacturer records, partner assignments, central moderation, and email routing.
-- Public modules: vehicle finder, featured vehicle cards, manufacturer news and vehicle inquiry.
-- Three-step partner front-end wizard for vehicles and news with contextual fields, field help, preview, editing of published entries, correction resubmission from the portal and central approval before changes go live.
-- Manufacturer contact email is stored on the manufacturer profile. Vehicle inquiries are routed to that address; an optional ABH copy can be configured.
-- Prices are never stored as public listing output; the front end says “Preis auf Anfrage”.
-- Vehicle availability and editorial approval are separate states.
-- Seed records for the six currently named manufacturers are added on activation. Contact emails are intentionally left blank until supplied.
+- Shared manufacturer profiles, partner assignments, central moderation and email routing.
+- Public vehicle finder, featured vehicle cards, manufacturer news and vehicle inquiry form.
+- Partner onboarding with manufacturer selection, email verification and central account approval. Multiple users can belong to the same manufacturer; partner users work entirely in the front end.
+- Three-step wizard for vehicles and news with contextual help, preview, browser-local draft saving, editable text suggestions, image preview and drag-and-drop upload.
+- Company dashboard with published entries, items awaiting review, requested corrections, review activity and quick vehicle availability changes that go through central approval.
+- Receipt, approval, correction and rejection emails. Approval notices link to the published entry.
+- Event cards show date and location and label past events.
+- Vehicle inquiries go to the email address stored in the relevant manufacturer profile. An optional copy can go to ABH.
+- Prices are never displayed; vehicle listings use “Preis auf Anfrage”.
+- Seed records for the six manufacturers are added on activation. Contact email addresses must be entered by ABH.
 
 ## Installation
 
-1. Upload the `abh-solutions-platform` folder to `wp-content/plugins/` or zip it and install in WordPress.
+1. Upload the `abh-solutions-platform` folder to `wp-content/plugins/` or upload the ZIP in WordPress.
 2. Activate **ABH Solutions Plattform**.
 3. In **Einstellungen → ABH Solutions**, set the central moderation email.
 4. Edit each profile under **Aufbauhersteller** and add its inquiry email.
-5. Create partner users in WordPress, assign the **ABH Aufbauhersteller** role and select the linked manufacturer in the user profile.
-6. The plugin creates a published **Herstellerportal** page automatically with the `[abh_partnerportal]` shortcode. Existing installations are checked on the next admin visit too. The page shows a login form to visitors and the wizard only to authenticated partner accounts.
-7. Add the public finder, featured vehicles and news shortcodes to the desired Flatsome UX Builder pages.
+5. The plugin creates a published **Herstellerportal** page with login and partner registration. After email confirmation, ABH reviews each account under **Einstellungen → ABH Partnerzugänge**. Only approved accounts can use the wizard. Existing installations are checked on the next admin visit too.
+6. Add the public finder, featured vehicles and news shortcodes to the desired Flatsome UX Builder pages.
 
 ## Shortcodes
 
 - `[abh_fahrzeugfinder]` — filterable vehicle listing.
 - `[abh_fahrzeugkarten limit="6" featured="1"]` — up to six featured vehicles.
 - `[abh_aktuelles limit="6"]` — latest manufacturer updates.
-- `[abh_partnerportal]` — protected front-end submission portal.
+- `[abh_partnerportal]` — login, partner registration and protected submission portal.
 - `[abh_fahrzeuganfrage]` — inquiry form for a vehicle detail page; also accepts `vehicle_id="123"`.
 
-## Notes for the next implementation milestone
+## Operational notes
 
-This is the initial development foundation. The next iteration should add configurable vehicle taxonomies, availability reminders, automatic content suggestions and a fuller moderation dashboard. The exact vehicle/body-type taxonomy and partner email addresses are not yet supplied.
+- Unsubmitted drafts are stored in the partner’s current browser and device. Submitted content and its review history are stored in WordPress.
+- Confirm the site’s privacy policy URL and configure reliable transactional email delivery before opening registrations.
+- Manufacturer inquiry email addresses and final vehicle taxonomy values still need to be supplied.
