@@ -48,7 +48,7 @@
     if(heading&&moveFocus){heading.setAttribute('tabindex','-1');heading.focus();}
   }
   function setType(form,type){
-    form.setAttribute('data-type',type||'');
+    form.setAttribute('data-type',type||''); var hiddenType=form.querySelector('input[name="content_type"]'); if(hiddenType) hiddenType.value=type||'';
     form.querySelectorAll('.abhsp-fieldset').forEach(function(group){
       var active=!!type&&group.classList.contains(type==='vehicle'?'abhsp-vehicle-fields':'abhsp-news-fields');
       group.disabled=!active;
@@ -86,6 +86,24 @@
   });
   document.addEventListener('DOMContentLoaded',function(){
     document.querySelectorAll('.abhsp-wizard').forEach(function(form){
+      var prefill=form.getAttribute('data-prefill');
+      if(prefill){
+        try{
+          var values=JSON.parse(prefill);
+          Object.keys(values).forEach(function(key){
+            if(key==='content_type'){
+              var selector=form.querySelector('#abhsp_content_type');
+              if(selector) selector.value=values[key];
+              var hidden=form.querySelector('input[name="content_type"]');
+              if(hidden) hidden.value=values[key];
+              return;
+            }
+            var field=form.querySelector('[name="'+key+'"]') || form.querySelector('#abhsp_'+key);
+            if(field&&field.type==='checkbox') field.checked=!!values[key];
+            else if(field&&field.type!=='file') field.value=values[key]||'';
+          });
+        }catch(error){ /* keep the form usable with empty defaults */ }
+      }
       var type=form.querySelector('#abhsp_content_type');
       if(type) setType(form,type.value);
       setStep(form,1);
