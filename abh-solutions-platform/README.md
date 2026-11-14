@@ -19,7 +19,8 @@ WordPress plugin foundation for the ABH Solutions vehicle finder, manufacturer n
 3. In **Einstellungen → ABH Solutions**, set the central moderation email.
 4. Edit each profile under **Aufbauhersteller** and add its inquiry email.
 5. Create partner users in WordPress, assign the **ABH Aufbauhersteller** role and select the linked manufacturer in the user profile.
-6. Add pages and insert shortcodes in Flatsome UX Builder.
+6. The plugin creates a published **Herstellerportal** page automatically with the `[abh_partnerportal]` shortcode. Existing installations are checked on the next admin visit too. The page shows a login form to visitors and the wizard only to authenticated partner accounts.
+7. Add the public finder, featured vehicles and news shortcodes to the desired Flatsome UX Builder pages.
 
 ## Shortcodes
 
