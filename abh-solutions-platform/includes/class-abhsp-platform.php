@@ -148,7 +148,12 @@ final class ABHSP_Platform {
         );
         foreach ($fields as $key => $label) {
             $value = get_post_meta($post->ID, '_abhsp_' . $key, true);
-            if ($key === 'availability') {
+            if ($key === 'manufacturer_id') {
+                $manufacturers = get_posts(array('post_type'=>'abh_manufacturer','numberposts'=>-1,'orderby'=>'title','order'=>'ASC'));
+                echo '<p><label><strong>' . esc_html($label) . '</strong><select class="widefat" name="abhsp_manufacturer_id"><option value="">Hersteller auswählen</option>';
+                foreach ($manufacturers as $manufacturer) echo '<option value="' . esc_attr($manufacturer->ID) . '" ' . selected((string)$value,(string)$manufacturer->ID,false) . '>' . esc_html($manufacturer->post_title) . '</option>';
+                echo '</select></label></p>';
+            } elseif ($key === 'availability') {
                 echo '<p><label><strong>' . esc_html($label) . '</strong></label><select class="widefat" name="abhsp_' . esc_attr($key) . '">';
                 foreach (array('available'=>'Sofort verfügbar','on_request'=>'Auf Anfrage','preparing'=>'In Vorbereitung','reserved'=>'Reserviert','sold'=>'Verkauft') as $val=>$text) echo '<option value="' . esc_attr($val) . '" ' . selected($value ?: 'available', $val, false) . '>' . esc_html($text) . '</option>';
                 echo '</select></p>';
@@ -209,7 +214,7 @@ final class ABHSP_Platform {
     public function shortcode_portal() {
         $this->assets();
         if (!is_user_logged_in()) {
-            return '<section class="abhsp-shell abhsp-login"><div class="abhsp-panel"><p class="abhsp-eyebrow">ABH PARTNERBEREICH</p><h2>Willkommen im Herstellerportal</h2><p>Melden Sie sich an, um Fahrzeuge oder Aktuelles zur Freigabe einzureichen.</p>' . wp_login_form(array('echo'=>false,'remember'=>true)) . '</div></section>';
+            return '<section class="abhsp-shell abhsp-login"><div class="abhsp-panel"><p class="abhsp-eyebrow">ABH PARTNERBEREICH</p><h2>Willkommen im Herstellerportal</h2><p>Melden Sie sich an, um Fahrzeuge oder Aktuelles zur Freigabe einzureichen.</p>' . wp_login_form(array('echo'=>false,'remember'=>true,'redirect'=>get_permalink())) . '</div></section>';
         }
         $user = wp_get_current_user();
         $manufacturer_id = absint(get_user_meta($user->ID, '_abhsp_manufacturer_id', true));
@@ -237,7 +242,7 @@ final class ABHSP_Platform {
         echo '<div class="abhsp-field abhsp-news-fields"><label for="abhsp_event_date">Termin (falls zutreffend)</label><input id="abhsp_event_date" type="date" name="event_date"></div>';
         echo '<div class="abhsp-field abhsp-news-fields"><label for="abhsp_event_location">Ort (falls zutreffend)</label><input id="abhsp_event_location" name="event_location" placeholder="Ort / Messegelände"></div>';
         echo '<div class="abhsp-field abhsp-common"><label for="abhsp_details">Weitere Informationen</label><textarea id="abhsp_details" name="details" rows="5" placeholder="Ergänzen Sie Details, technische Besonderheiten oder Hinweise."></textarea><small>Bitte keine Preise eintragen. Interessenten fragen Preise direkt beim Hersteller an.</small></div></div>';
-        echo '<label class="abhsp-check"><input type="checkbox" name="feature_home" value="1"> Fahrzeug zusätzlich für die Startseite vormerken <span>(maximal sechs; Auswahl durch ABH)</span></label>';
+        echo '<label class="abhsp-check abhsp-feature-home"><input type="checkbox" name="feature_home" value="1"> Fahrzeug zusätzlich für die Startseite vormerken <span>(maximal sechs; Auswahl durch ABH)</span></label>';
         echo '<label class="abhsp-check"><input type="checkbox" name="privacy" value="1" required> Ich bestätige, dass die Angaben zur Veröffentlichung freigegeben sind.</label>';
         echo '<div class="abhsp-wizard-actions"><button class="abhsp-button" type="submit">Zur zentralen Freigabe senden <span aria-hidden="true">→</span></button><p>Sie erhalten eine E-Mail, sobald Ihre Einreichung geprüft wurde.</p></div></form></section>';
         return ob_get_clean();

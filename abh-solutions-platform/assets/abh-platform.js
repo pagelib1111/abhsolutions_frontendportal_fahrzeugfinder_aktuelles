@@ -6,6 +6,12 @@
       if(form){ form.setAttribute('data-type', event.target.value || ''); }
     }
   });
+  document.addEventListener('DOMContentLoaded', function(){
+    document.querySelectorAll('.abhsp-wizard').forEach(function(form){
+      var type = form.querySelector('#abhsp_content_type');
+      if(type){ form.setAttribute('data-type', type.value || ''); }
+    });
+  });
   document.addEventListener('submit', function(event){
     var form = event.target;
     if(form && form.classList.contains('abhsp-wizard')){
