@@ -26,7 +26,7 @@
     var selector=form.querySelector('#abhsp_content_type');
     if(typeNode&&selector) typeNode.textContent=selector.value==='vehicle'?'FAHRZEUG':'AKTUELLES';
   }
-  function setStep(form,step){
+  function setStep(form,step,moveFocus){
     var current=Math.max(1,Math.min(3,step));
     form.setAttribute('data-step',String(current));
     form.querySelectorAll('[data-step-panel]').forEach(function(panel){
@@ -45,7 +45,7 @@
     if(submit) submit.hidden=current!==3;
     if(current===3) updatePreview(form);
     var heading=form.querySelector('[data-step-panel="'+current+'"] h3');
-    if(heading){heading.setAttribute('tabindex','-1');heading.focus();}
+    if(heading&&moveFocus){heading.setAttribute('tabindex','-1');heading.focus();}
   }
   function setType(form,type){
     form.setAttribute('data-type',type||'');
@@ -61,7 +61,7 @@
     if(!next&&!back) return;
     var form=event.target.closest('.abhsp-wizard');
     if(!form) return;
-    if(back){setStep(form,Number(form.getAttribute('data-step'))-1);return;}
+    if(back){setStep(form,Number(form.getAttribute('data-step'))-1,true);return;}
     var current=Number(form.getAttribute('data-step'));
     var panel=form.querySelector('[data-step-panel="'+current+'"]');
     if(panel){
@@ -70,7 +70,7 @@
         if(!required[i].checkValidity()){required[i].reportValidity();return;}
       }
     }
-    setStep(form,current+1);
+    setStep(form,current+1,true);
   });
   document.addEventListener('change',function(event){
     var form=event.target&&event.target.closest('.abhsp-wizard');
@@ -97,7 +97,7 @@
     var type=form.querySelector('#abhsp_content_type');
     if(!type||!type.value){
       event.preventDefault();
-      setStep(form,1);
+      setStep(form,1,true);
       if(type){type.focus();type.setCustomValidity('Bitte wählen Sie zuerst Fahrzeug oder Aktuelles aus.');type.reportValidity();}
     }
   });
