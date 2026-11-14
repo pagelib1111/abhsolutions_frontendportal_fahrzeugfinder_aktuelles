@@ -3,7 +3,7 @@ if (!defined('ABSPATH')) exit;
 
 final class ABHSP_Platform {
     private static $instance = null;
-    private $manufacturer_data = array(
+    private static $manufacturer_data = array(
         'Ackermann GmbH' => array(
             'description' => 'Maßgeschneiderte Fahrzeugaufbauten für Abschlepp-, Transport- und Logistiklösungen. Innovative Leichtbaukonzepte und intelligente Nutzlastlösungen stehen für professionellen Fahrzeugeinsatz mit Ackermann.',
             'specialties' => 'Abschleppfahrzeuge • Autotransporter • Kofferaufbauten • Zusatzachsen'
@@ -231,7 +231,7 @@ final class ABHSP_Platform {
         echo '<div class="abhsp-field abhsp-vehicle-fields"><label for="abhsp_base_vehicle">Basisfahrzeug</label><input id="abhsp_base_vehicle" name="base_vehicle" placeholder="z. B. MAN TGE"></div>';
         echo '<div class="abhsp-field abhsp-vehicle-fields"><label for="abhsp_location">Standort</label><input id="abhsp_location" name="location" placeholder="Ort oder PLZ"></div>';
         echo '<div class="abhsp-field abhsp-vehicle-fields"><label for="abhsp_payload">Nutzlast</label><input id="abhsp_payload" name="payload" placeholder="z. B. 820 kg"></div>';
-        echo '<div class="abhsp-field abhsp-vehicle-fields"><label for="abhsp_availability">Verfügbarkeit</label><select id="abhsp_availability" name="availability"><option value="available">Sofort verfügbar</option><option value="on_request">Auf Anfrage</option><option value="preparing">In Vorbereitung</option><option value="reserved">Reserviert</option></select></div>';
+        echo '<div class="abhsp-field abhsp-vehicle-fields"><label for="abhsp_availability">Verfügbarkeit</label><select id="abhsp_availability" name="availability"><option value="available">Sofort verfügbar</option><option value="on_request">Auf Anfrage</option><option value="preparing">In Vorbereitung</option><option value="reserved">Reserviert</option><option value="sold">Verkauft</option></select></div>';
         echo '<div class="abhsp-field abhsp-vehicle-fields"><label for="abhsp_image">Fahrzeugbild</label><input id="abhsp_image" type="file" name="vehicle_image" accept="image/jpeg,image/png,image/webp"><small>JPG, PNG oder WebP. Preisangaben werden nicht veröffentlicht.</small></div>';
         echo '<div class="abhsp-field abhsp-news-fields"><label for="abhsp_news_kind">Art des Aktuellen</label><select id="abhsp_news_kind" name="news_kind"><option value="novelty">Neuheit</option><option value="trade_fair">Messe / Hausmesse</option><option value="event">Veranstaltung</option><option value="sale_of_month">Verkauf des Monats</option><option value="other">Sonstige Nachricht</option></select></div>';
         echo '<div class="abhsp-field abhsp-news-fields"><label for="abhsp_event_date">Termin (falls zutreffend)</label><input id="abhsp_event_date" type="date" name="event_date"></div>';
@@ -311,16 +311,16 @@ final class ABHSP_Platform {
         if ($post->post_status === 'pending') {
             $approve = wp_nonce_url(admin_url('admin-post.php?action=abhsp_review_submission&decision=approve&submission=' . $post->ID), 'abhsp_review_' . $post->ID);
             $changes = wp_nonce_url(admin_url('admin-post.php?action=abhsp_review_submission&decision=changes&submission=' . $post->ID), 'abhsp_review_' . $post->ID);
-            echo '<p><a class="button button-primary" href="' . esc_url($approve) . '">Freigeben & veröffentlichen</a></p><p><label for="abhsp_change_note">Hinweis an Hersteller</label><textarea id="abhsp_change_note" class="widefat" name="abhsp_change_note" rows="3" placeholder="Was soll angepasst werden?"></textarea></p><p><a class="button" href="' . esc_url($changes) . '">Änderung anfordern</a></p>';
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="abhsp_review_submission"><input type="hidden" name="decision" value="approve"><input type="hidden" name="submission" value="' . esc_attr($post->ID) . '"><input type="hidden" name="_wpnonce" value="' . esc_attr(wp_create_nonce('abhsp_review_' . $post->ID)) . '"><p><button class="button button-primary" type="submit">Freigeben & veröffentlichen</button></p></form><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="abhsp_review_submission"><input type="hidden" name="decision" value="changes"><input type="hidden" name="submission" value="' . esc_attr($post->ID) . '"><input type="hidden" name="_wpnonce" value="' . esc_attr(wp_create_nonce('abhsp_review_' . $post->ID)) . '"><p><label for="abhsp_change_note">Hinweis an Hersteller</label><textarea id="abhsp_change_note" class="widefat" name="note" rows="3" placeholder="Was soll angepasst werden?"></textarea></p><p><button class="button" type="submit">Änderung anfordern</button></p></form>';
         }
     }
 
     public function review_submission() {
-        $id = absint($_GET['submission'] ?? 0);
-        if (!$id || !current_user_can('edit_post', $id) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'] ?? '')), 'abhsp_review_' . $id)) wp_die('Freigabe nicht zulässig.');
+        $id = absint($_POST['submission'] ?? 0);
+        if (!$id || !current_user_can('edit_post', $id) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'] ?? '')), 'abhsp_review_' . $id)) wp_die('Freigabe nicht zulässig.');
         $submission = get_post($id);
         if (!$submission || $submission->post_type !== 'abh_submission') wp_die('Einreichung nicht gefunden.');
-        $decision = sanitize_key(wp_unslash($_GET['decision'] ?? ''));
+        $decision = sanitize_key(wp_unslash($_POST['decision'] ?? ''));
         $type = get_post_meta($id, '_abhsp_type', true);
         $manufacturer_id = absint(get_post_meta($id, '_abhsp_manufacturer_id', true));
         $payload = get_post_meta($id, '_abhsp_payload', true);
@@ -335,6 +335,7 @@ final class ABHSP_Platform {
                 foreach (array('vehicle_type','body_type','application','base_vehicle','location','payload','availability') as $key) update_post_meta($target_id, '_abhsp_' . $key, sanitize_text_field($payload[$key] ?? ''));
                 $featured = !empty($payload['feature_home']) && $this->featured_count() < 6;
                 update_post_meta($target_id, '_abhsp_featured', $featured ? '1' : '0');
+                update_post_meta($target_id, '_abhsp_featured_order', 9999);
                 if (!empty($payload['availability']) && $payload['availability'] === 'sold') update_post_meta($target_id, '_abhsp_featured', '0');
                 $image_id = absint(get_post_meta($id, '_abhsp_image_id', true));
                 if ($image_id) set_post_thumbnail($target_id, $image_id);
@@ -347,7 +348,7 @@ final class ABHSP_Platform {
             $this->notify_submitter($id, 'approved', '');
         } elseif ($decision === 'changes') {
             update_post_meta($id, '_abhsp_review_state', 'changes');
-            update_post_meta($id, '_abhsp_review_note', sanitize_textarea_field(wp_unslash($_GET['note'] ?? '')));
+            update_post_meta($id, '_abhsp_review_note', sanitize_textarea_field(wp_unslash($_POST['note'] ?? '')));
             $this->notify_submitter($id, 'changes', get_post_meta($id, '_abhsp_review_note', true));
         }
         wp_safe_redirect(admin_url('edit.php?post_type=abh_submission'));
@@ -394,7 +395,7 @@ final class ABHSP_Platform {
             }
             echo '</select></label>';
         }
-        echo '</div><div class="abhsp-filter-actions"><button class="abhsp-button" type="submit">Fahrzeuge anzeigen</button><a href="' . esc_url(remove_query_arg(array_keys(array_map(function($k){return 'abh_'.$k;}, $filters)))) . '">Filter zurücksetzen</a></div></form>';
+        echo '</div><div class="abhsp-filter-actions"><button class="abhsp-button" type="submit">Fahrzeuge anzeigen</button><a href="' . esc_url(remove_query_arg(array_map(function($k){return 'abh_'.$k;}, array_keys($filters)))) . '">Filter zurücksetzen</a></div></form>';
         echo '<div class="abhsp-card-grid">';
         if ($query->have_posts()) { while ($query->have_posts()) { $query->the_post(); echo $this->vehicle_card(get_the_ID()); } wp_reset_postdata(); }
         else echo '<div class="abhsp-empty"><h3>Keine passenden Fahrzeuge gefunden</h3><p>Ändern Sie einen Filter oder setzen Sie die Suche zurück.</p></div>';
