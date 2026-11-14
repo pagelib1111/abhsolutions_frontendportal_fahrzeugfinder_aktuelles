@@ -6,7 +6,7 @@ WordPress plugin foundation for the ABH Solutions vehicle finder, manufacturer n
 
 - One plugin with shared manufacturer records, partner assignments, central moderation, and email routing.
 - Public modules: vehicle finder, featured vehicle cards, manufacturer news and vehicle inquiry.
-- Partner front-end submission form for vehicles and news; submissions remain pending until an administrator approves them.
+- Three-step partner front-end wizard for vehicles and news with contextual fields, field help, preview and central approval before publication.
 - Manufacturer contact email is stored on the manufacturer profile. Vehicle inquiries are routed to that address; an optional ABH copy can be configured.
 - Prices are never stored as public listing output; the front end says “Preis auf Anfrage”.
 - Vehicle availability and editorial approval are separate states.
@@ -31,4 +31,4 @@ WordPress plugin foundation for the ABH Solutions vehicle finder, manufacturer n
 
 ## Notes for the next implementation milestone
 
-This is the initial development foundation. The next iteration should add partner-side editing of existing vehicles and news, explicit review feedback, richer staged wizard behavior, configurable vehicle taxonomies, and a polished review queue. The exact vehicle/body-type taxonomy and partner email addresses are not yet supplied.
+This is the initial development foundation. The next iteration should add partner-side editing of existing vehicles and news, configurable vehicle taxonomies, availability reminders and a polished review queue. The exact vehicle/body-type taxonomy and partner email addresses are not yet supplied.
