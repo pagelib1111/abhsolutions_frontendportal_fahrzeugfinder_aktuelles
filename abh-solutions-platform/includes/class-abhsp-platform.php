@@ -43,6 +43,7 @@ final class ABHSP_Platform {
         if (!get_role('abh_partner_pending')) {
             add_role('abh_partner_pending', 'ABH Zugang wartet auf Freigabe', array('read' => true));
         }
+        self::ensure_reviewer_role();
         self::ensure_portal_page();
         flush_rewrite_rules();
     }
@@ -95,6 +96,7 @@ final class ABHSP_Platform {
 
         add_action('init', array(__CLASS__, 'register_types'));
         add_action('init', array($this, 'ensure_partner_roles'));
+        add_filter('the_content', array($this, 'filter_public_detail'));
         add_action('init', array($this, 'register_assets'));
         add_action('init', array($this, 'handle_frontend_posts'));
         add_action('add_meta_boxes', array($this, 'add_meta_boxes'));
@@ -105,8 +107,11 @@ final class ABHSP_Platform {
         add_action('personal_options_update', array($this, 'save_user_manufacturer_field'));
         add_action('edit_user_profile_update', array($this, 'save_user_manufacturer_field'));
         add_action('admin_menu', array($this, 'settings_menu'));
+        add_action('admin_enqueue_scripts', array($this, 'admin_assets'));
         add_action('admin_init', array($this, 'register_settings'));
         add_action('admin_post_abhsp_review_submission', array($this, 'review_submission'));
+        add_action('admin_post_abhsp_save_editorial', array($this, 'save_editorial_entry'));
+        add_action('admin_post_abhsp_save_manufacturer', array($this, 'save_manufacturer_editorial'));
         add_action('admin_post_nopriv_abhsp_partner_register', array($this, 'handle_partner_registration'));
         add_action('admin_post_abhsp_partner_register', array($this, 'handle_partner_registration'));
         add_action('admin_post_nopriv_abhsp_verify_partner', array($this, 'verify_partner_email'));
@@ -145,6 +150,18 @@ final class ABHSP_Platform {
     public function ensure_partner_roles() {
         if (!get_role('abh_partner')) add_role('abh_partner', 'ABH Aufbauhersteller', array('read' => true));
         if (!get_role('abh_partner_pending')) add_role('abh_partner_pending', 'ABH Zugang wartet auf Freigabe', array('read' => true));
+        self::ensure_reviewer_role();
+    }
+
+    private static function ensure_reviewer_role() {
+        $caps = array('read' => true, 'abh_review_content' => true);
+        $role = get_role('abh_editorial_manager');
+        if (!$role) $role = add_role('abh_editorial_manager', 'ABH Redaktion', $caps);
+        if ($role) foreach ($caps as $cap => $grant) $role->add_cap($cap, $grant);
+    }
+
+    private function can_review() {
+        return current_user_can('manage_options') || current_user_can('abh_review_content');
     }
 
     private static function seed_manufacturers() {
@@ -162,6 +179,10 @@ final class ABHSP_Platform {
     public function register_assets() {
         wp_register_style('abhsp-platform', ABHSP_URL . 'assets/abh-platform.css', array(), ABHSP_VERSION);
         wp_register_script('abhsp-platform', ABHSP_URL . 'assets/abh-platform.js', array(), ABHSP_VERSION, true);
+    }
+
+    public function admin_assets($hook) {
+        if (strpos((string)$hook, 'abhsp-') !== false) wp_enqueue_style('abhsp-platform');
     }
 
     private function assets() {
@@ -250,9 +271,103 @@ final class ABHSP_Platform {
     }
 
     public function settings_menu() {
+        add_menu_page('ABH Redaktion', 'ABH Redaktion', 'abh_review_content', 'abhsp-dashboard', array($this, 'dashboard_page'), 'dashicons-clipboard', 28);
+        add_submenu_page('abhsp-dashboard', 'Redaktionsübersicht', 'Übersicht', 'abh_review_content', 'abhsp-dashboard', array($this, 'dashboard_page'));
+        add_submenu_page('abhsp-dashboard', 'Partnerzugänge', 'Partnerzugänge', 'abh_review_content', 'abhsp-partners', array($this, 'partner_requests_page'));
         add_options_page('ABH Solutions Plattform', 'ABH Solutions', 'manage_options', 'abhsp-settings', array($this, 'settings_page'));
         add_options_page('ABH Partnerzugänge', 'ABH Partnerzugänge', 'manage_options', 'abhsp-partners', array($this, 'partner_requests_page'));
-        add_submenu_page(null, 'ABH Einreichung prüfen', 'ABH Einreichung prüfen', 'edit_posts', 'abhsp-review', array($this, 'review_page'));
+        add_submenu_page(null, 'ABH Einreichung prüfen', 'ABH Einreichung prüfen', 'abh_review_content', 'abhsp-review', array($this, 'review_page'));
+        add_submenu_page(null, 'ABH Inhalt bearbeiten', 'ABH Inhalt bearbeiten', 'abh_review_content', 'abhsp-edit-entry', array($this, 'editorial_edit_page'));
+        add_submenu_page(null, 'ABH Hersteller bearbeiten', 'ABH Hersteller bearbeiten', 'abh_review_content', 'abhsp-edit-manufacturer', array($this, 'manufacturer_editorial_page'));
+    }
+
+    public function dashboard_page() {
+        if (!$this->can_review()) wp_die('Keine Berechtigung.');
+        $pending = new WP_Query(array('post_type'=>'abh_submission','post_status'=>'pending','posts_per_page'=>1,'fields'=>'ids'));
+        $vehicles = wp_count_posts('abh_vehicle'); $updates = wp_count_posts('abh_update');
+        $partners = count(get_users(array('role'=>'abh_partner','fields'=>'ID')));
+        $manufacturers = get_posts(array('post_type'=>'abh_manufacturer','post_status'=>'publish','numberposts'=>-1,'orderby'=>'title','order'=>'ASC'));
+        $tab = sanitize_key(wp_unslash($_GET['view'] ?? 'pending'));
+        if (!in_array($tab, array('pending','vehicles','news','partners'), true)) $tab = 'pending';
+        $search = sanitize_text_field(wp_unslash($_GET['s'] ?? ''));
+        $manufacturer_filter = absint($_GET['manufacturer'] ?? 0);
+        echo '<div class="wrap abhsp-admin"><h1>ABH Redaktion</h1><p>Alle Einreichungen und veröffentlichten Inhalte zentral prüfen, korrigieren und nach Hersteller überblicken.</p>';
+        echo '<div class="abhsp-admin-stats">';
+        $stats = array(array('Zur Prüfung',$pending->found_posts,'pending'),array('Fahrzeuge',absint($vehicles->publish ?? 0),'vehicles'),array('Aktuelles',absint($updates->publish ?? 0),'news'),array('Partnerzugänge',$partners,'partners'));
+        foreach ($stats as $stat) echo '<a class="abhsp-admin-stat" href="' . esc_url(add_query_arg('view',$stat[2],admin_url('admin.php?page=abhsp-dashboard'))) . '"><span>' . esc_html($stat[0]) . '</span><strong>' . esc_html((string)$stat[1]) . '</strong></a>';
+        echo '</div><nav class="nav-tab-wrapper">';
+        foreach (array('pending'=>'Freigaben','vehicles'=>'Fahrzeuge','news'=>'Aktuelles','partners'=>'Hersteller & Nutzer') as $key=>$label) echo '<a class="nav-tab ' . ($tab===$key?'nav-tab-active':'') . '" href="' . esc_url(add_query_arg('view',$key,admin_url('admin.php?page=abhsp-dashboard'))) . '">' . esc_html($label) . '</a>';
+        echo '</nav>';
+        if ($tab === 'partners') {
+            echo '<table class="widefat striped"><thead><tr><th>Hersteller</th><th>Kontakt-E-Mail für Anfragen</th><th>Partnerkonten</th><th>Fahrzeuge</th><th>Aktuelles</th><th></th></tr></thead><tbody>';
+            foreach ($manufacturers as $m) {
+                $users = get_users(array('meta_key'=>'_abhsp_manufacturer_id','meta_value'=>$m->ID,'fields'=>array('ID','display_name','user_email')));
+                $v = new WP_Query(array('post_type'=>'abh_vehicle','post_status'=>'publish','posts_per_page'=>1,'fields'=>'ids','meta_query'=>array(array('key'=>'_abhsp_manufacturer_id','value'=>$m->ID))));
+                $n = new WP_Query(array('post_type'=>'abh_update','post_status'=>'publish','posts_per_page'=>1,'fields'=>'ids','meta_query'=>array(array('key'=>'_abhsp_manufacturer_id','value'=>$m->ID))));
+                $email = get_post_meta($m->ID,'_abhsp_email',true);
+                $edit_url=add_query_arg(array('page'=>'abhsp-edit-manufacturer','manufacturer'=>$m->ID),admin_url('admin.php'));
+                echo '<tr><td><strong>' . esc_html($m->post_title) . '</strong><br><small>ID ' . esc_html((string)$m->ID) . '</small></td><td>' . ($email ? '<a href="mailto:' . esc_attr($email) . '">' . esc_html($email) . '</a>' : '<span style="color:#b32d2e">Noch nicht hinterlegt</span>') . '</td><td>' . esc_html((string)count($users)) . '<br><small>' . esc_html(implode(', ',array_map(function($u){return $u->display_name;},$users))) . '</small></td><td>' . esc_html((string)$v->found_posts) . '</td><td>' . esc_html((string)$n->found_posts) . '</td><td><a class="button" href="' . esc_url($edit_url) . '">Hersteller bearbeiten</a></td></tr>';
+            }
+            echo '</tbody></table>';
+        } else {
+            echo '<form method="get" class="abhsp-admin-filters"><input type="hidden" name="page" value="abhsp-dashboard"><input type="hidden" name="view" value="' . esc_attr($tab) . '"><input type="search" name="s" value="' . esc_attr($search) . '" placeholder="Titel suchen"><select name="manufacturer"><option value="0">Alle Hersteller</option>';
+            foreach ($manufacturers as $m) echo '<option value="' . esc_attr((string)$m->ID) . '" ' . selected($manufacturer_filter,$m->ID,false) . '>' . esc_html($m->post_title) . '</option>';
+            echo '</select><button class="button">Filtern</button></form>';
+            $post_type = $tab === 'vehicles' ? 'abh_vehicle' : ($tab === 'news' ? 'abh_update' : 'abh_submission');
+            $args = array('post_type'=>$post_type,'post_status'=>$tab==='pending'?'pending':'publish','posts_per_page'=>50,'orderby'=>'date','order'=>'DESC','s'=>$search);
+            if ($manufacturer_filter) $args['meta_query'] = array(array('key'=>'_abhsp_manufacturer_id','value'=>$manufacturer_filter));
+            $query = new WP_Query($args);
+            echo '<table class="widefat striped"><thead><tr><th>Titel / Typ</th><th>Hersteller</th><th>Eingereicht von</th><th>Status / Datum</th><th>Aktion</th></tr></thead><tbody>';
+            if ($query->have_posts()) while ($query->have_posts()) { $query->the_post(); $id=get_the_ID(); $mid=absint(get_post_meta($id,'_abhsp_manufacturer_id',true)); if ($tab==='pending') $mid=absint(get_post_meta($id,'_abhsp_manufacturer_id',true)); $author=get_userdata(get_post_field('post_author',$id)); $kind=$post_type==='abh_submission'?(get_post_meta($id,'_abhsp_type',true)==='vehicle'?'Fahrzeug':'Aktuelles'):($post_type==='abh_vehicle'?'Fahrzeug':'Aktuelles');
+                $state=$tab==='pending'?'Wartet auf Freigabe':(get_post_meta($id,'_abhsp_availability',true)?:'Veröffentlicht');
+                $edit=$tab==='pending'?add_query_arg(array('page'=>'abhsp-review','submission'=>$id),admin_url('admin.php')):add_query_arg(array('page'=>'abhsp-edit-entry','entry'=>$id),admin_url('admin.php'));
+                echo '<tr><td><strong>' . esc_html(get_the_title()) . '</strong><br><small>' . esc_html($kind) . '</small></td><td>' . esc_html(get_the_title($mid) ?: 'Nicht zugeordnet') . '</td><td>' . esc_html($author?$author->display_name:'Unbekannt') . '<br><small>' . esc_html($author?$author->user_email:'') . '</small></td><td>' . esc_html($state) . '<br><small>' . esc_html(get_the_date('d.m.Y H:i')) . '</small></td><td><a class="button button-primary" href="' . esc_url($edit) . '">' . ($tab==='pending'?'Prüfen':'Bearbeiten') . '</a></td></tr>';
+            }
+            wp_reset_postdata(); if (!$query->found_posts) echo '<tr><td colspan="5">Keine passenden Einträge gefunden.</td></tr>'; echo '</tbody></table>';
+        }
+        echo '</div>';
+    }
+
+    public function editorial_edit_page() {
+        if (!$this->can_review()) wp_die('Keine Berechtigung.');
+        $id=absint($_GET['entry']??0); $post=get_post($id);
+        if (!$post || !in_array($post->post_type,array('abh_vehicle','abh_update'),true)) wp_die('Eintrag nicht gefunden.');
+        $mid=absint(get_post_meta($id,'_abhsp_manufacturer_id',true)); $is_vehicle=$post->post_type==='abh_vehicle';
+        $fields=$is_vehicle?array('vehicle_type'=>'Fahrzeugart','body_type'=>'Aufbauart','application'=>'Einsatzbereich','base_vehicle'=>'Basisfahrzeug','location'=>'Standort','payload'=>'Nutzlast','availability'=>'Verfügbarkeit'):array('news_kind'=>'Themenart','event_date'=>'Termin (YYYY-MM-DD)','event_location'=>'Veranstaltungsort');
+        echo '<div class="wrap"><h1>ABH-Inhalt bearbeiten</h1>' . (isset($_GET['saved'])?'<div class="notice notice-success is-dismissible"><p>Änderungen gespeichert.</p></div>':'') . '<p><strong>Hersteller:</strong> ' . esc_html(get_the_title($mid)) . ' · <a href="' . esc_url(get_permalink($id)) . '" target="_blank" rel="noopener">Öffentliche Ansicht</a></p><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="abhsp-editor-form">';
+        wp_nonce_field('abhsp_editorial_'.$id); echo '<input type="hidden" name="action" value="abhsp_save_editorial"><input type="hidden" name="entry" value="' . esc_attr((string)$id) . '"><table class="form-table"><tr><th><label for="title">Titel</label></th><td><input id="title" class="large-text" name="title" value="' . esc_attr($post->post_title) . '" required></td></tr><tr><th><label for="summary">Kurzbeschreibung</label></th><td><textarea id="summary" class="large-text" rows="3" name="summary">' . esc_textarea(get_post_meta($id,'_abhsp_summary',true)?:$post->post_excerpt) . '</textarea></td></tr>';
+        foreach($fields as $key=>$label) echo '<tr><th><label for="' . esc_attr($key) . '">' . esc_html($label) . '</label></th><td><input class="regular-text" id="' . esc_attr($key) . '" name="meta[' . esc_attr($key) . ']" value="' . esc_attr(get_post_meta($id,'_abhsp_'.$key,true)) . '"></td></tr>';
+        echo '<tr><th><label for="details">Beschreibung</label></th><td><textarea class="large-text" rows="9" id="details" name="details">' . esc_textarea($post->post_content) . '</textarea></td></tr><tr><th>Startseite</th><td><label><input type="checkbox" name="featured" value="1" ' . checked(get_post_meta($id,'_abhsp_featured',true)==='1',true,false) . '> Als Fahrzeug auf der Startseite zeigen (max. 6)</label></td></tr></table>';
+        submit_button('Änderungen speichern'); echo '</form><p><a href="' . esc_url(admin_url('admin.php?page=abhsp-dashboard&view=' . ($is_vehicle?'vehicles':'news'))) . '">← Zurück zur Redaktion</a></p></div>';
+    }
+
+    public function save_editorial_entry() {
+        $id=absint($_POST['entry']??0); $post=get_post($id);
+        if (!$this->can_review() || !$post || !in_array($post->post_type,array('abh_vehicle','abh_update'),true) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce']??'')),'abhsp_editorial_'.$id)) wp_die('Speichern nicht zulässig.');
+        wp_update_post(array('ID'=>$id,'post_title'=>sanitize_text_field(wp_unslash($_POST['title']??'')),'post_content'=>wp_kses_post(wp_unslash($_POST['details']??'')),'post_excerpt'=>sanitize_textarea_field(wp_unslash($_POST['summary']??''))));
+        update_post_meta($id,'_abhsp_summary',sanitize_textarea_field(wp_unslash($_POST['summary']??'')));
+        foreach((array)wp_unslash($_POST['meta']??array()) as $key=>$value) if (in_array($key,array('vehicle_type','body_type','application','base_vehicle','location','payload','availability','news_kind','event_date','event_location'),true)) update_post_meta($id,'_abhsp_'.$key,sanitize_text_field($value));
+        if ($post->post_type==='abh_vehicle') { $was_featured=get_post_meta($id,'_abhsp_featured',true)==='1'; update_post_meta($id,'_abhsp_featured',!empty($_POST['featured']) && ($was_featured || $this->featured_count()<6)?'1':'0'); }
+        wp_safe_redirect(add_query_arg(array('page'=>'abhsp-edit-entry','entry'=>$id,'saved'=>'1'),admin_url('admin.php'))); exit;
+    }
+
+    public function manufacturer_editorial_page() {
+        if (!$this->can_review()) wp_die('Keine Berechtigung.');
+        $id=absint($_GET['manufacturer']??0); $post=get_post($id);
+        if (!$post || $post->post_type!=='abh_manufacturer') wp_die('Hersteller nicht gefunden.');
+        echo '<div class="wrap"><h1>Herstellerprofil bearbeiten</h1>' . (isset($_GET['saved'])?'<div class="notice notice-success is-dismissible"><p>Herstellerprofil gespeichert.</p></div>':'') . '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="abhsp-editor-form">';
+        wp_nonce_field('abhsp_manufacturer_editorial_'.$id);
+        echo '<input type="hidden" name="action" value="abhsp_save_manufacturer"><input type="hidden" name="manufacturer" value="' . esc_attr((string)$id) . '"><table class="form-table"><tr><th><label for="name">Herstellername</label></th><td><input class="regular-text" id="name" name="name" value="' . esc_attr($post->post_title) . '" required></td></tr><tr><th><label for="email">Anfragen-E-Mail</label></th><td><input class="regular-text" type="email" id="email" name="email" value="' . esc_attr(get_post_meta($id,'_abhsp_email',true)) . '"><p class="description">Fahrzeuganfragen werden an diese Adresse zugestellt.</p></td></tr><tr><th><label for="description">Beschreibung</label></th><td><textarea class="large-text" rows="5" id="description" name="description">' . esc_textarea($post->post_content) . '</textarea></td></tr><tr><th><label for="specialties">Schwerpunkte</label></th><td><textarea class="large-text" rows="3" id="specialties" name="specialties">' . esc_textarea(get_post_meta($id,'_abhsp_specialties',true)) . '</textarea></td></tr></table>';
+        submit_button('Herstellerprofil speichern'); echo '</form><p><a href="' . esc_url(admin_url('admin.php?page=abhsp-dashboard&view=partners')) . '">← Zurück zu Hersteller & Nutzer</a></p></div>';
+    }
+
+    public function save_manufacturer_editorial() {
+        $id=absint($_POST['manufacturer']??0); $post=get_post($id);
+        if (!$this->can_review() || !$post || $post->post_type!=='abh_manufacturer' || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce']??'')),'abhsp_manufacturer_editorial_'.$id)) wp_die('Speichern nicht zulässig.');
+        wp_update_post(array('ID'=>$id,'post_title'=>sanitize_text_field(wp_unslash($_POST['name']??'')),'post_content'=>wp_kses_post(wp_unslash($_POST['description']??''))));
+        update_post_meta($id,'_abhsp_email',sanitize_email(wp_unslash($_POST['email']??'')));
+        update_post_meta($id,'_abhsp_specialties',sanitize_textarea_field(wp_unslash($_POST['specialties']??'')));
+        wp_safe_redirect(add_query_arg(array('page'=>'abhsp-edit-manufacturer','manufacturer'=>$id,'saved'=>'1'),admin_url('admin.php'))); exit;
     }
 
     public function register_settings() {
@@ -485,7 +600,7 @@ final class ABHSP_Platform {
         delete_user_meta($user_id, '_abhsp_email_token_expires');
         $manufacturer_id = absint(get_user_meta($user_id, '_abhsp_manufacturer_id', true));
         $moderation = sanitize_email(get_option('abhsp_moderation_email', get_option('admin_email')));
-        $review_url = admin_url('options-general.php?page=abhsp-partners');
+        $review_url = admin_url('admin.php?page=abhsp-partners');
         $this->send_html_mail($moderation, 'E-Mail bestätigt: ABH Partnerzugang prüfen', '<p>Der Ansprechpartner <strong>' . esc_html($user->display_name) . '</strong> für <strong>' . esc_html(get_the_title($manufacturer_id)) . '</strong> hat seine E-Mail-Adresse bestätigt.</p><p><a href="' . esc_url($review_url) . '">Partnerzugang prüfen</a></p>');
         $portal_url = get_permalink(absint(get_option('abhsp_portal_page_id', 0))) ?: home_url('/');
         wp_safe_redirect(add_query_arg('abhsp_verified', '1', $portal_url));
@@ -493,7 +608,7 @@ final class ABHSP_Platform {
     }
 
     public function partner_requests_page() {
-        if (!current_user_can('manage_options')) wp_die('Keine Berechtigung.');
+        if (!$this->can_review()) wp_die('Keine Berechtigung.');
         $users = get_users(array('role'=>'abh_partner_pending','number'=>200,'orderby'=>'registered','order'=>'ASC'));
         echo '<div class="wrap"><h1>ABH Partnerzugänge</h1><p>Geprüfte E-Mail-Adressen können hier für das jeweilige Herstellerprofil freigeschaltet werden.</p><table class="widefat striped"><thead><tr><th>Kontakt</th><th>Unternehmen</th><th>E-Mail</th><th>E-Mail-Status</th><th>Anfrage</th><th>Aktion</th></tr></thead><tbody>';
         if (!$users) echo '<tr><td colspan="6">Keine offenen Zugangs-Anfragen.</td></tr>';
@@ -518,7 +633,7 @@ final class ABHSP_Platform {
     }
 
     public function handle_partner_decision() {
-        if (!current_user_can('manage_options')) wp_die('Keine Berechtigung.');
+        if (!$this->can_review()) wp_die('Keine Berechtigung.');
         $user_id = absint($_POST['user_id'] ?? 0);
         $decision = sanitize_key(wp_unslash($_POST['decision'] ?? ''));
         if (!$user_id || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'] ?? '')), 'abhsp_partner_decision_' . $user_id)) wp_die('Sicherheitsprüfung fehlgeschlagen.');
@@ -705,7 +820,7 @@ final class ABHSP_Platform {
     public function review_page() {
         $id = absint($_GET['submission'] ?? 0);
         $post = $id ? get_post($id) : null;
-        if (!$post || $post->post_type !== 'abh_submission' || !current_user_can('edit_post', $id)) wp_die('Sie dürfen diese Einreichung nicht prüfen.');
+        if (!$post || $post->post_type !== 'abh_submission' || !$this->can_review()) wp_die('Sie dürfen diese Einreichung nicht prüfen.');
         $type = get_post_meta($id, '_abhsp_type', true);
         $manufacturer_id = absint(get_post_meta($id, '_abhsp_manufacturer_id', true));
         $target_id = absint(get_post_meta($id, '_abhsp_target_id', true));
@@ -732,7 +847,11 @@ final class ABHSP_Platform {
         if ($post->post_status === 'pending') {
             echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="max-width:900px;background:#fff;border:1px solid #dcdcde;padding:24px">';
             wp_nonce_field('abhsp_review_' . $id);
-            echo '<input type="hidden" name="action" value="abhsp_review_submission"><input type="hidden" name="submission" value="' . esc_attr($id) . '"><label for="abhsp_review_note"><strong>Hinweis bei Änderungsbedarf oder Ablehnung</strong></label><textarea id="abhsp_review_note" class="large-text" name="note" rows="4" placeholder="Optionaler Hinweis bei Freigabe; bei Rückfrage oder Ablehnung bitte kurz begründen."></textarea><p class="submit"><button class="button button-primary" type="submit" name="decision" value="approve">Freigeben & veröffentlichen</button> <button class="button" type="submit" name="decision" value="changes">Änderungen anfordern</button> <button class="button" type="submit" name="decision" value="reject">Ablehnen</button></p></form>';
+            echo '<input type="hidden" name="action" value="abhsp_review_submission"><input type="hidden" name="submission" value="' . esc_attr($id) . '"><h2>Inhalt vor Freigabe korrigieren</h2><p><label><strong>Titel</strong><input class="large-text" name="edited_title" value="' . esc_attr($post->post_title) . '"></label></p><p><label><strong>Kurzbeschreibung</strong><textarea class="large-text" name="edited_summary" rows="3">' . esc_textarea($payload['summary'] ?? '') . '</textarea></label></p><p><label><strong>Beschreibung</strong><textarea class="large-text" name="edited_details" rows="6">' . esc_textarea($payload['details'] ?? '') . '</textarea></label></p>';
+            $editable_fields=$type==='vehicle'?array('vehicle_type'=>'Fahrzeugart','body_type'=>'Aufbauart','application'=>'Einsatzbereich','base_vehicle'=>'Basisfahrzeug','location'=>'Standort','payload'=>'Nutzlast','availability'=>'Verfügbarkeit'):array('news_kind'=>'Themenart','event_date'=>'Termin','event_location'=>'Veranstaltungsort');
+            foreach($editable_fields as $key=>$label) echo '<p><label><strong>' . esc_html($label) . '</strong><input class="regular-text" name="edited_payload[' . esc_attr($key) . ']" value="' . esc_attr($payload[$key] ?? '') . '"></label></p>';
+            if($type==='vehicle') echo '<p><label><input type="checkbox" name="edited_feature_home" value="1" ' . checked(!empty($payload['feature_home']),true,false) . '> Für die Startseite vormerken (max. 6 aktive Fahrzeuge)</label></p>';
+            echo '<p><label for="abhsp_review_note"><strong>Hinweis bei Änderungsbedarf oder Ablehnung</strong></label><textarea id="abhsp_review_note" class="large-text" name="note" rows="4" placeholder="Optionaler Hinweis bei Freigabe; bei Rückfrage oder Ablehnung bitte kurz begründen."></textarea></p><p class="submit"><button class="button button-primary" type="submit" name="decision" value="approve">Korrigieren & freigeben</button> <button class="button" type="submit" name="decision" value="changes">Änderungen anfordern</button> <button class="button" type="submit" name="decision" value="reject">Ablehnen</button></p></form>';
         } else {
             echo '<p>Diese Einreichung wurde bereits bearbeitet.</p>';
         }
@@ -741,7 +860,7 @@ final class ABHSP_Platform {
 
     public function review_submission() {
         $id = absint($_POST['submission'] ?? 0);
-        if (!$id || !current_user_can('edit_post', $id) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'] ?? '')), 'abhsp_review_' . $id)) wp_die('Freigabe nicht zulässig.');
+        if (!$id || !$this->can_review() || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'] ?? '')), 'abhsp_review_' . $id)) wp_die('Freigabe nicht zulässig.');
         $submission = get_post($id);
         if (!$submission || $submission->post_type !== 'abh_submission') wp_die('Einreichung nicht gefunden.');
         $decision = sanitize_key(wp_unslash($_POST['decision'] ?? ''));
@@ -750,11 +869,17 @@ final class ABHSP_Platform {
         $payload = get_post_meta($id, '_abhsp_payload', true);
         $payload = is_array($payload) ? $payload : array();
         if ($decision === 'approve') {
+            $edited_payload=(array)wp_unslash($_POST['edited_payload']??array());
+            $allowed=$type==='vehicle'?array('vehicle_type','body_type','application','base_vehicle','location','payload','availability'):array('news_kind','event_date','event_location');
+            foreach($allowed as $key) if(array_key_exists($key,$edited_payload)) $payload[$key]=sanitize_text_field($edited_payload[$key]);
+            $payload['summary']=sanitize_textarea_field(wp_unslash($_POST['edited_summary']??$payload['summary']??''));
+            $payload['details']=wp_kses_post(wp_unslash($_POST['edited_details']??$payload['details']??''));
+            if($type==='vehicle') $payload['feature_home']=!empty($_POST['edited_feature_home']);
             $target_type = $type === 'vehicle' ? 'abh_vehicle' : 'abh_update';
             $target_id = absint(get_post_meta($id, '_abhsp_target_id', true));
             $existing = $target_id ? get_post($target_id) : null;
             if ($existing && ($existing->post_type !== $target_type || absint(get_post_meta($target_id, '_abhsp_manufacturer_id', true)) !== $manufacturer_id)) wp_die('Der vorhandene Eintrag ist nicht mehr verfügbar oder gehört einem anderen Hersteller.');
-            $post_data = array('post_type'=>$target_type,'post_status'=>'publish','post_title'=>$submission->post_title,'post_content'=>wp_kses_post($payload['details'] ?? ''),'post_excerpt'=>sanitize_textarea_field($payload['summary'] ?? ''),'post_author'=>$existing ? $existing->post_author : get_current_user_id());
+            $post_data = array('post_type'=>$target_type,'post_status'=>'publish','post_title'=>sanitize_text_field(wp_unslash($_POST['edited_title']??$submission->post_title)),'post_content'=>wp_kses_post($payload['details'] ?? ''),'post_excerpt'=>sanitize_textarea_field($payload['summary'] ?? ''),'post_author'=>$existing ? $existing->post_author : $submission->post_author);
             if ($existing) {
                 $post_data['ID'] = $target_id;
                 $saved_id = wp_update_post($post_data, true);
@@ -798,7 +923,7 @@ final class ABHSP_Platform {
             wp_update_post(array('ID'=>$id,'post_status'=>'publish'));
             $this->notify_submitter($id, 'rejected', $review_note);
         }
-        wp_safe_redirect(admin_url('edit.php?post_type=abh_submission'));
+        wp_safe_redirect(admin_url('admin.php?page=abhsp-dashboard&view=pending'));
         exit;
     }
 
@@ -833,17 +958,19 @@ final class ABHSP_Platform {
 
     public function shortcode_finder($atts) {
         $this->assets();
+        $keyword = sanitize_text_field(wp_unslash($_GET['abh_q'] ?? ''));
+        $sort = sanitize_key(wp_unslash($_GET['abh_sort'] ?? 'newest'));
         $filters = array();
         foreach (array('vehicle_type'=>'Fahrzeugart','body_type'=>'Aufbauart','application'=>'Einsatzbereich','manufacturer_id'=>'Aufbauhersteller','base_vehicle'=>'Basisfahrzeug','location'=>'Standort') as $key=>$label) {
             $filters[$key] = sanitize_text_field(wp_unslash($_GET['abh_' . $key] ?? ''));
         }
         $meta_query = array('relation'=>'AND', array('key'=>'_abhsp_availability','value'=>'sold','compare'=>'!='));
         foreach ($filters as $key=>$value) if ($value !== '') $meta_query[] = array('key'=>'_abhsp_' . $key,'value'=>$value,'compare'=>'LIKE');
-        $args = array('post_type'=>'abh_vehicle','post_status'=>'publish','posts_per_page'=>12,'meta_query'=>$meta_query,'orderby'=>'date','order'=>'DESC');
+        $args = array('post_type'=>'abh_vehicle','post_status'=>'publish','posts_per_page'=>12,'meta_query'=>$meta_query,'s'=>$keyword,'orderby'=>$sort==='title'?'title':'date','order'=>'DESC');
         $query = new WP_Query($args);
         ob_start();
         echo '<section class="abhsp-shell abhsp-finder"><div class="abhsp-finder-heading"><div><p class="abhsp-eyebrow">ABH READY TO GO</p><h2>Fahrzeugfinder</h2><p>Finden Sie passende Fahrzeuge und Aufbaulösungen unserer Hersteller.</p></div><span class="abhsp-result-count">' . esc_html((string)$query->found_posts) . ' Treffer</span></div>';
-        echo '<form class="abhsp-filter" method="get"><div class="abhsp-filter-grid">';
+        echo '<form class="abhsp-filter" method="get"><div class="abhsp-filter-search"><label><span>Stichwort</span><input type="search" name="abh_q" value="' . esc_attr($keyword) . '" placeholder="z. B. Kühlfahrzeug, Koffer, MAN TGE"></label><label><span>Sortierung</span><select name="abh_sort"><option value="newest" ' . selected($sort,'newest',false) . '>Neueste zuerst</option><option value="title" ' . selected($sort,'title',false) . '>Alphabetisch</option></select></label></div><div class="abhsp-filter-grid">';
         $manufacturers = get_posts(array('post_type'=>'abh_manufacturer','numberposts'=>-1,'orderby'=>'title','order'=>'ASC'));
         foreach ($filters as $key=>$selected) {
             $label = array('vehicle_type'=>'Fahrzeugart','body_type'=>'Aufbauart','application'=>'Einsatzbereich','manufacturer_id'=>'Aufbauhersteller','base_vehicle'=>'Basisfahrzeug','location'=>'Standort')[$key];
@@ -855,7 +982,7 @@ final class ABHSP_Platform {
             }
             echo '</select></label>';
         }
-        echo '</div><div class="abhsp-filter-actions"><button class="abhsp-button" type="submit">Fahrzeuge anzeigen</button><a href="' . esc_url(remove_query_arg(array_map(function($k){return 'abh_'.$k;}, array_keys($filters)))) . '">Filter zurücksetzen</a></div></form>';
+        echo '</div><div class="abhsp-filter-actions"><button class="abhsp-button" type="submit">Fahrzeuge anzeigen</button><a href="' . esc_url(remove_query_arg(array_merge(array_map(function($k){return 'abh_'.$k;}, array_keys($filters)),array('abh_q','abh_sort'))) . '">Filter zurücksetzen</a></div></form>';
         echo '<div class="abhsp-card-grid">';
         if ($query->have_posts()) { while ($query->have_posts()) { $query->the_post(); echo $this->vehicle_card(get_the_ID()); } wp_reset_postdata(); }
         else echo '<div class="abhsp-empty"><h3>Keine passenden Fahrzeuge gefunden</h3><p>Ändern Sie einen Filter oder setzen Sie die Suche zurück.</p></div>';
@@ -904,15 +1031,46 @@ final class ABHSP_Platform {
     public function shortcode_news($atts) {
         $this->assets();
         $atts = shortcode_atts(array('limit'=>6,'manufacturer'=>''), $atts, 'abh_aktuelles');
+        $manufacturer = absint($_GET['abh_news_manufacturer'] ?? $atts['manufacturer']);
+        $kind = sanitize_key(wp_unslash($_GET['abh_news_kind'] ?? ''));
+        $period = sanitize_key(wp_unslash($_GET['abh_news_period'] ?? ''));
+        $meta=array(); if($manufacturer) $meta[]=array('key'=>'_abhsp_manufacturer_id','value'=>$manufacturer);
+        if($kind) $meta[]=array('key'=>'_abhsp_news_kind','value'=>$kind);
+        if($period==='upcoming') $meta[]=array('relation'=>'OR',array('key'=>'_abhsp_event_date','value'=>current_time('Y-m-d'),'compare'=>'>=','type'=>'DATE'),array('key'=>'_abhsp_event_date','value'=>'','compare'=>'='));
+        elseif($period==='past') $meta[]=array('key'=>'_abhsp_event_date','value'=>current_time('Y-m-d'),'compare'=>'<','type'=>'DATE');
         $args = array('post_type'=>'abh_update','post_status'=>'publish','posts_per_page'=>max(1,min(12,absint($atts['limit']))),'orderby'=>'date','order'=>'DESC');
-        if ($atts['manufacturer'] !== '') $args['meta_query'] = array(array('key'=>'_abhsp_manufacturer_id','value'=>absint($atts['manufacturer'])));
+        if($meta) $args['meta_query']=array_merge(array('relation'=>'AND'),$meta);
         $query = new WP_Query($args);
-        ob_start(); echo '<section class="abhsp-shell abhsp-news-grid">';
+        $makers=get_posts(array('post_type'=>'abh_manufacturer','post_status'=>'publish','numberposts'=>-1,'orderby'=>'title','order'=>'ASC'));
+        ob_start(); echo '<section class="abhsp-shell"><form class="abhsp-filter abhsp-news-filter" method="get"><div class="abhsp-filter-grid"><label><span>Aufbauhersteller</span><select name="abh_news_manufacturer"><option value="0">Alle Hersteller</option>'; foreach($makers as $maker) echo '<option value="' . esc_attr((string)$maker->ID) . '" ' . selected($manufacturer,$maker->ID,false) . '>' . esc_html($maker->post_title) . '</option>'; echo '</select></label><label><span>Thema</span><select name="abh_news_kind"><option value="">Alle Themen</option><option value="event" ' . selected($kind,'event',false) . '>Hausmesse / Event</option><option value="trade_fair" ' . selected($kind,'trade_fair',false) . '>Messe</option><option value="novelty" ' . selected($kind,'novelty',false) . '>Neuheit</option><option value="sale_of_month" ' . selected($kind,'sale_of_month',false) . '>Verkauf des Monats</option><option value="other" ' . selected($kind,'other',false) . '>Meldung</option></select></label><label><span>Termin</span><select name="abh_news_period"><option value="">Alle Meldungen</option><option value="upcoming" ' . selected($period,'upcoming',false) . '>Kommende Termine</option><option value="past" ' . selected($period,'past',false) . '>Vergangene Termine</option></select></label></div><div class="abhsp-filter-actions"><button class="abhsp-button" type="submit">Aktuelles filtern</button><a href="' . esc_url(remove_query_arg(array('abh_news_manufacturer','abh_news_kind','abh_news_period'))) . '">Filter zurücksetzen</a></div></form><div class="abhsp-news-grid">';
         if ($query->have_posts()) { while ($query->have_posts()) { $query->the_post(); $id=get_the_ID(); $mid=absint(get_post_meta($id,'_abhsp_manufacturer_id',true)); $kind=get_post_meta($id,'_abhsp_news_kind',true); $event_date=get_post_meta($id,'_abhsp_event_date',true); $event_location=get_post_meta($id,'_abhsp_event_location',true); $is_event=in_array($kind,array('event','trade_fair'),true); $is_past=$is_event && $event_date && $event_date < current_time('Y-m-d'); echo '<article class="abhsp-news-card"><a class="abhsp-news-image" href="' . esc_url(get_permalink($id)) . '">' . (get_the_post_thumbnail($id,'large') ?: '<span>ABH SOLUTIONS</span>') . '</a><div class="abhsp-news-content"><p class="abhsp-card-brand">' . esc_html(get_the_title($mid)) . ' · ' . esc_html(get_the_date('', $id)) . '</p><h3><a href="' . esc_url(get_permalink($id)) . '">' . esc_html(get_the_title($id)) . '</a></h3>';
             if ($is_event && ($event_date || $event_location)) echo '<p class="abhsp-event-meta">' . ($event_date ? '<strong>' . esc_html(wp_date('d.m.Y', strtotime($event_date))) . '</strong>' : '') . ($event_location ? ' · ' . esc_html($event_location) : '') . ($is_past ? ' <span class="abhsp-event-past">Termin vorbei</span>' : '') . '</p>';
             echo '<p>' . esc_html(get_the_excerpt($id)) . '</p><a class="abhsp-text-link" href="' . esc_url(get_permalink($id)) . '">Weiterlesen →</a></div></article>'; } wp_reset_postdata(); }
         else echo '<p class="abhsp-empty">Aktuell gibt es keine Beiträge.</p>';
-        echo '</section>'; return ob_get_clean();
+        echo '</div></section>'; return ob_get_clean();
+    }
+
+    public function filter_public_detail($content) {
+        if (is_admin() || !is_singular(array('abh_vehicle','abh_update')) || !in_the_loop() || !is_main_query()) return $content;
+        $this->assets();
+        $id=get_the_ID(); $mid=absint(get_post_meta($id,'_abhsp_manufacturer_id',true));
+        $html='<div class="abhsp-detail">';
+        if(has_post_thumbnail($id)) $html.='<div class="abhsp-detail-image">'.get_the_post_thumbnail($id,'large').'</div>';
+        $html.='<p class="abhsp-card-brand">'.esc_html(get_the_title($mid)).'</p>';
+        if(get_post_type($id)==='abh_vehicle') {
+            $labels=array('vehicle_type'=>'Fahrzeugart','body_type'=>'Aufbauart','application'=>'Einsatzbereich','base_vehicle'=>'Basisfahrzeug','payload'=>'Nutzlast','location'=>'Standort'); $html.='<div class="abhsp-detail-facts">';
+            foreach($labels as $key=>$label){$value=get_post_meta($id,'_abhsp_'.$key,true);if($value)$html.='<div><span>'.esc_html($label).'</span><strong>'.esc_html($value).'</strong></div>';}
+            $status=get_post_meta($id,'_abhsp_availability',true);$status_labels=array('available'=>'Sofort verfügbar','on_request'=>'Auf Anfrage','preparing'=>'In Vorbereitung','reserved'=>'Reserviert','sold'=>'Verkauft');
+            if($status)$html.='<div><span>Status</span><strong>'.esc_html($status_labels[$status]??'Auf Anfrage').'</strong></div>';
+            $html.='</div><p class="abhsp-detail-price">Preis auf Anfrage</p><p>Sie möchten mehr über dieses Fahrzeug erfahren? Senden Sie Ihre Anfrage direkt an den zuständigen Aufbauhersteller.</p><p><a class="abhsp-button" href="#fahrzeuganfrage">Preis und Verfügbarkeit anfragen →</a></p>';
+        } else {
+            $kind=get_post_meta($id,'_abhsp_news_kind',true); $date=get_post_meta($id,'_abhsp_event_date',true); $location=get_post_meta($id,'_abhsp_event_location',true);
+            if($kind||$date||$location)$html.='<div class="abhsp-detail-news">'.($kind?'<span>'.esc_html($kind).'</span>':'').($date?'<strong>'.esc_html(wp_date('d.m.Y',strtotime($date))).'</strong>':'').($location?'<span>'.esc_html($location).'</span>':'').'</div>';
+        }
+        $html.='</div>';
+        if(get_post_type($id)==='abh_vehicle') $html.=$content.'<div id="fahrzeuganfrage">'.do_shortcode('[abh_fahrzeuganfrage vehicle_id="'.$id.'"]').'</div>';
+        else $html.=$content;
+        return $html;
     }
 
     public function shortcode_inquiry($atts) {
