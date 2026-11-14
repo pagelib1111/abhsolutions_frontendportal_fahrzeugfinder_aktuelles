@@ -334,7 +334,10 @@ final class ABHSP_Platform {
         if (!$post || !in_array($post->post_type,array('abh_vehicle','abh_update'),true)) wp_die('Eintrag nicht gefunden.');
         $mid=absint(get_post_meta($id,'_abhsp_manufacturer_id',true)); $is_vehicle=$post->post_type==='abh_vehicle';
         $fields=$is_vehicle?array('vehicle_type'=>'Fahrzeugart','body_type'=>'Aufbauart','application'=>'Einsatzbereich','base_vehicle'=>'Basisfahrzeug','location'=>'Standort','payload'=>'Nutzlast','availability'=>'Verfügbarkeit'):array('news_kind'=>'Themenart','event_date'=>'Termin (YYYY-MM-DD)','event_location'=>'Veranstaltungsort');
-        echo '<div class="wrap"><h1>ABH-Inhalt bearbeiten</h1>' . (isset($_GET['saved'])?'<div class="notice notice-success is-dismissible"><p>Änderungen gespeichert.</p></div>':'') . '<p><strong>Hersteller:</strong> ' . esc_html(get_the_title($mid)) . ' · <a href="' . esc_url(get_permalink($id)) . '" target="_blank" rel="noopener">Öffentliche Ansicht</a></p><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="abhsp-editor-form">';
+        $audit=get_post_meta($id,'_abhsp_editorial_log',true); $audit=is_array($audit)?array_reverse($audit):array();
+        echo '<div class="wrap"><h1>ABH-Inhalt bearbeiten</h1>' . (isset($_GET['saved'])?'<div class="notice notice-success is-dismissible"><p>Änderungen gespeichert.</p></div>':'') . '<p><strong>Hersteller:</strong> ' . esc_html(get_the_title($mid)) . ' · <a href="' . esc_url(get_permalink($id)) . '" target="_blank" rel="noopener">Öffentliche Ansicht</a></p>';
+        if($audit){echo '<div class="abhsp-editor-history"><strong>Letzte zentrale Änderungen</strong>'; foreach(array_slice($audit,0,8) as $log){$editor=get_userdata(absint($log['user_id']??0));echo '<p>'.esc_html(mysql2date('d.m.Y H:i',$log['date']??'')).' · '.esc_html($editor?$editor->display_name:'Redaktion').'</p>';} echo '</div>';}
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="abhsp-editor-form">';
         wp_nonce_field('abhsp_editorial_'.$id); echo '<input type="hidden" name="action" value="abhsp_save_editorial"><input type="hidden" name="entry" value="' . esc_attr((string)$id) . '"><table class="form-table"><tr><th><label for="title">Titel</label></th><td><input id="title" class="large-text" name="title" value="' . esc_attr($post->post_title) . '" required></td></tr><tr><th><label for="summary">Kurzbeschreibung</label></th><td><textarea id="summary" class="large-text" rows="3" name="summary">' . esc_textarea(get_post_meta($id,'_abhsp_summary',true)?:$post->post_excerpt) . '</textarea></td></tr>';
         foreach($fields as $key=>$label) echo '<tr><th><label for="' . esc_attr($key) . '">' . esc_html($label) . '</label></th><td><input class="regular-text" id="' . esc_attr($key) . '" name="meta[' . esc_attr($key) . ']" value="' . esc_attr(get_post_meta($id,'_abhsp_'.$key,true)) . '"></td></tr>';
         echo '<tr><th><label for="details">Beschreibung</label></th><td><textarea class="large-text" rows="9" id="details" name="details">' . esc_textarea($post->post_content) . '</textarea></td></tr><tr><th>Startseite</th><td><label><input type="checkbox" name="featured" value="1" ' . checked(get_post_meta($id,'_abhsp_featured',true)==='1',true,false) . '> Als Fahrzeug auf der Startseite zeigen (max. 6)</label></td></tr></table>';
@@ -348,6 +351,7 @@ final class ABHSP_Platform {
         update_post_meta($id,'_abhsp_summary',sanitize_textarea_field(wp_unslash($_POST['summary']??'')));
         foreach((array)wp_unslash($_POST['meta']??array()) as $key=>$value) if (in_array($key,array('vehicle_type','body_type','application','base_vehicle','location','payload','availability','news_kind','event_date','event_location'),true)) update_post_meta($id,'_abhsp_'.$key,sanitize_text_field($value));
         if ($post->post_type==='abh_vehicle') { $was_featured=get_post_meta($id,'_abhsp_featured',true)==='1'; update_post_meta($id,'_abhsp_featured',!empty($_POST['featured']) && ($was_featured || $this->featured_count()<6)?'1':'0'); }
+        $log=get_post_meta($id,'_abhsp_editorial_log',true); $log=is_array($log)?$log:array(); $log[]=array('user_id'=>get_current_user_id(),'date'=>current_time('mysql')); update_post_meta($id,'_abhsp_editorial_log',array_slice($log,-30));
         wp_safe_redirect(add_query_arg(array('page'=>'abhsp-edit-entry','entry'=>$id,'saved'=>'1'),admin_url('admin.php'))); exit;
     }
 
@@ -367,6 +371,7 @@ final class ABHSP_Platform {
         wp_update_post(array('ID'=>$id,'post_title'=>sanitize_text_field(wp_unslash($_POST['name']??'')),'post_content'=>wp_kses_post(wp_unslash($_POST['description']??''))));
         update_post_meta($id,'_abhsp_email',sanitize_email(wp_unslash($_POST['email']??'')));
         update_post_meta($id,'_abhsp_specialties',sanitize_textarea_field(wp_unslash($_POST['specialties']??'')));
+        $log=get_post_meta($id,'_abhsp_editorial_log',true); $log=is_array($log)?$log:array(); $log[]=array('user_id'=>get_current_user_id(),'date'=>current_time('mysql')); update_post_meta($id,'_abhsp_editorial_log',array_slice($log,-30));
         wp_safe_redirect(add_query_arg(array('page'=>'abhsp-edit-manufacturer','manufacturer'=>$id,'saved'=>'1'),admin_url('admin.php'))); exit;
     }
 
@@ -663,7 +668,7 @@ final class ABHSP_Platform {
             $body = '<div style="font-family:Arial,sans-serif;color:#14233f;max-width:640px"><div style="background:#005eab;padding:18px 24px;color:#fff;font-size:18px;font-weight:bold">ABH SOLUTIONS · PARTNERPORTAL</div><div style="padding:24px;border:1px solid #e3e9f0"><h2>Bestätigen Sie Ihre E-Mail-Adresse</h2><p>Bitte bestätigen Sie Ihre E-Mail-Adresse für den angefragten Partnerzugang zu <strong>' . esc_html(get_the_title($manufacturer_id)) . '</strong>.</p><p><a style="display:inline-block;background:#005eab;color:#fff;text-decoration:none;padding:12px 18px;font-weight:bold" href="' . esc_url($verify_url) . '">E-Mail-Adresse bestätigen</a></p><p>Der Link ist 24 Stunden gültig.</p></div></div>';
             $this->send_html_mail($user->user_email, 'Neuer Bestätigungslink für das ABH Partnerportal', $body);
         }
-        wp_safe_redirect(admin_url('options-general.php?page=abhsp-partners'));
+        wp_safe_redirect(admin_url('admin.php?page=abhsp-partners'));
         exit;
     }
 
