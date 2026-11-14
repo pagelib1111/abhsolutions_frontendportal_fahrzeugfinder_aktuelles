@@ -40,10 +40,56 @@ final class ABHSP_Platform {
         if (!get_role('abh_partner')) {
             add_role('abh_partner', 'ABH Aufbauhersteller', array('read' => true));
         }
+        self::ensure_portal_page();
         flush_rewrite_rules();
     }
 
+    public static function ensure_portal_page() {
+        $saved_id = absint(get_option('abhsp_portal_page_id', 0));
+        $saved_page = $saved_id ? get_post($saved_id) : null;
+        if ($saved_page && $saved_page->post_type === 'page' && has_shortcode($saved_page->post_content, 'abh_partnerportal')) {
+            return $saved_id;
+        }
+
+        $existing_pages = get_pages(array('post_status' => array('publish', 'private', 'draft', 'pending')));
+        foreach ($existing_pages as $page) {
+            if (has_shortcode($page->post_content, 'abh_partnerportal')) {
+                update_option('abhsp_portal_page_id', $page->ID);
+                return $page->ID;
+            }
+        }
+
+        $page = get_page_by_path('herstellerportal', OBJECT, 'page');
+        if ($page && trim($page->post_content) === '') {
+            $page_id = wp_update_post(array('ID' => $page->ID, 'post_content' => '[abh_partnerportal]'), true);
+        } elseif (!$page) {
+            $page_id = wp_insert_post(array(
+                'post_type' => 'page',
+                'post_status' => 'publish',
+                'post_title' => 'Herstellerportal',
+                'post_name' => 'herstellerportal',
+                'post_content' => '[abh_partnerportal]',
+            ), true);
+        } else {
+            $page_id = wp_insert_post(array(
+                'post_type' => 'page',
+                'post_status' => 'publish',
+                'post_title' => 'ABH Herstellerportal',
+                'post_name' => 'abh-herstellerportal',
+                'post_content' => '[abh_partnerportal]',
+            ), true);
+        }
+
+        if (!is_wp_error($page_id) && $page_id) {
+            update_option('abhsp_portal_page_id', absint($page_id));
+            return absint($page_id);
+        }
+        return 0;
+    }
+
     private function __construct() {
+        add_action('admin_init', array(__CLASS__, 'ensure_portal_page'));
+
         add_action('init', array(__CLASS__, 'register_types'));
         add_action('init', array($this, 'register_assets'));
         add_action('init', array($this, 'handle_frontend_posts'));
@@ -200,7 +246,11 @@ final class ABHSP_Platform {
     }
 
     public function settings_page() {
-        echo '<div class="wrap"><h1>ABH Solutions Plattform</h1><form method="post" action="options.php">';
+        $portal_page_id = absint(get_option('abhsp_portal_page_id', 0));
+        $portal_url = $portal_page_id ? get_permalink($portal_page_id) : '';
+        echo '<div class="wrap"><h1>ABH Solutions Plattform</h1>';
+        if ($portal_url) echo '<p><strong>Herstellerportal:</strong> <a href="' . esc_url($portal_url) . '" target="_blank" rel="noopener">Portal-Seite öffnen</a> · Shortcode: <code>[abh_partnerportal]</code></p>';
+        echo '<form method="post" action="options.php">';
         settings_fields('abhsp_settings');
         echo '<table class="form-table"><tr><th><label for="abhsp_moderation_email">Zentrale Freigabe-E-Mail</label></th><td><input class="regular-text" type="email" id="abhsp_moderation_email" name="abhsp_moderation_email" value="' . esc_attr(get_option('abhsp_moderation_email', get_option('admin_email'))) . '"><p class="description">Neue Fahrzeuge und Aktuelles warten immer auf die zentrale Freigabe.</p></td></tr>';
         echo '<tr><th><label for="abhsp_inquiry_cc">Kopie an ABH bei Fahrzeuganfragen (optional)</label></th><td><input class="regular-text" type="email" id="abhsp_inquiry_cc" name="abhsp_inquiry_cc" value="' . esc_attr(get_option('abhsp_inquiry_cc', '')) . '"></td></tr></table>';
