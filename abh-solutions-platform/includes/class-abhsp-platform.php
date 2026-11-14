@@ -223,14 +223,29 @@ final class ABHSP_Platform {
             return '<div class="abhsp-notice abhsp-notice-error">Für dieses Konto ist noch kein Herstellerprofil hinterlegt. Bitte wenden Sie sich an ABH Solutions.</div>';
         }
         $edit_id = absint($_GET['abhsp_edit'] ?? 0);
+        $correction_id = absint($_GET['abhsp_correct'] ?? 0);
         $edit_post = $edit_id ? get_post($edit_id) : null;
-        if ($edit_post && !in_array($edit_post->post_type, array('abh_vehicle','abh_update'), true)) $edit_post = null;
-        if ($edit_post && $edit_post->post_status !== 'publish') $edit_post = null;
+        $correction_post = $correction_id ? get_post($correction_id) : null;
+        if ($edit_post && (!in_array($edit_post->post_type, array('abh_vehicle','abh_update'), true) || $edit_post->post_status !== 'publish')) $edit_post = null;
         if ($edit_post && !current_user_can('manage_options') && absint(get_post_meta($edit_id, '_abhsp_manufacturer_id', true)) !== $manufacturer_id) $edit_post = null;
         if ($edit_id && !$edit_post) return '<div class="abhsp-notice abhsp-notice-error">Dieser Eintrag ist nicht verfügbar oder gehört nicht zu Ihrem Herstellerkonto.</div>';
-        $type = $edit_post ? ($edit_post->post_type === 'abh_vehicle' ? 'vehicle' : 'news') : '';
+        if ($correction_post && ($correction_post->post_type !== 'abh_submission' || get_post_meta($correction_id, '_abhsp_review_state', true) !== 'changes')) $correction_post = null;
+        if ($correction_post && !current_user_can('manage_options') && (absint(get_post_meta($correction_id, '_abhsp_manufacturer_id', true)) !== $manufacturer_id || (int)$correction_post->post_author !== (int)$user->ID)) $correction_post = null;
+        if ($correction_id && !$correction_post) return '<div class="abhsp-notice abhsp-notice-error">Diese Rückmeldung ist nicht verfügbar oder gehört nicht zu Ihrem Herstellerkonto.</div>';
+        if ($edit_post && $correction_post) return '<div class="abhsp-notice abhsp-notice-error">Bitte öffnen Sie jeweils nur einen Eintrag zur Bearbeitung.</div>';
+        $type = $correction_post ? get_post_meta($correction_id, '_abhsp_type', true) : ($edit_post ? ($edit_post->post_type === 'abh_vehicle' ? 'vehicle' : 'news') : '');
         $prefill = array();
-        if ($edit_post) {
+        if ($correction_post) {
+            $data = get_post_meta($correction_id, '_abhsp_payload', true);
+            $data = is_array($data) ? $data : array();
+            $prefill = array_merge($data, array(
+                'content_type'=>$type,
+                'title'=>$correction_post->post_title,
+                'summary'=>get_post_meta($correction_id, '_abhsp_summary', true),
+                'details'=>$data['details'] ?? '',
+                'feature_home'=>!empty($data['feature_home']),
+            ));
+        } elseif ($edit_post) {
             $prefill = array(
                 'content_type'=>$type,
                 'title'=>$edit_post->post_title,
@@ -275,17 +290,30 @@ final class ABHSP_Platform {
         } else {
             echo '<div class="abhsp-empty"><p>Sie haben noch keine veröffentlichten Einträge. Starten Sie mit Ihrem ersten Fahrzeug oder einem Aktuelles-Beitrag.</p></div>';
         }
+        $corrections = get_posts(array(
+            'post_type'=>'abh_submission','post_status'=>'pending','author'=>$user->ID,'posts_per_page'=>20,
+            'meta_query'=>array(array('key'=>'_abhsp_review_state','value'=>'changes','compare'=>'='))
+        ));
+        if ($corrections) {
+            echo '<div class="abhsp-corrections"><h4>Rückmeldungen zur Überarbeitung</h4>';
+            foreach ($corrections as $correction) {
+                $note = get_post_meta($correction->ID, '_abhsp_review_note', true);
+                $correction_url = add_query_arg('abhsp_correct', $correction->ID, remove_query_arg(array('abhsp_edit','abhsp_correct','abhsp_sent'), get_permalink())) . '#abhsp-neueinreichung';
+                echo '<article><div><strong>' . esc_html($correction->post_title) . '</strong>' . ($note ? '<p>' . esc_html($note) . '</p>' : '') . '</div><a class="abhsp-text-link" href="' . esc_url($correction_url) . '">Überarbeiten →</a></article>';
+            }
+            echo '</div>';
+        }
         echo '</div>';
-        $form_title = $edit_post ? 'Änderung einreichen' : 'Neuen Eintrag erstellen';
-        $form_intro = $edit_post ? 'Ihre Änderung wird zentral geprüft. Die aktuelle Veröffentlichung bleibt bis zur Freigabe bestehen.' : 'Der Wizard führt Sie durch die Eingabe. Vor der Veröffentlichung prüft die zentrale Redaktion Ihre Angaben.';
+        $form_title = $correction_post ? 'Korrektur einreichen' : ($edit_post ? 'Änderung einreichen' : 'Neuen Eintrag erstellen');
+        $form_intro = $correction_post ? 'Überarbeiten Sie die angefragten Punkte. Ihre Ergänzung wird erneut zentral geprüft.' : ($edit_post ? 'Ihre Änderung wird zentral geprüft. Die aktuelle Veröffentlichung bleibt bis zur Freigabe bestehen.' : 'Der Wizard führt Sie durch die Eingabe. Vor der Veröffentlichung prüft die zentrale Redaktion Ihre Angaben.');
         $prefill_json = esc_attr(wp_json_encode($prefill));
         echo '<form id="abhsp-neueinreichung" class="abhsp-panel abhsp-wizard" method="post" enctype="multipart/form-data" data-step="1" data-prefill="' . $prefill_json . '">';
         wp_nonce_field('abhsp_portal_submit', 'abhsp_portal_nonce');
-        echo '<input type="hidden" name="abhsp_portal_submit" value="1"><input type="hidden" name="target_id" value="' . esc_attr($edit_post ? $edit_post->ID : 0) . '"><div class="abhsp-wizard-title"><div><p class="abhsp-eyebrow">INHALTSPFLEGE</p><h3>' . esc_html($form_title) . '</h3><p>' . esc_html($form_intro) . '</p></div>';
+        echo '<input type="hidden" name="abhsp_portal_submit" value="1"><input type="hidden" name="target_id" value="' . esc_attr($correction_post ? absint(get_post_meta($correction_id, '_abhsp_target_id', true)) : ($edit_post ? $edit_post->ID : 0)) . '"><input type="hidden" name="resubmission_id" value="' . esc_attr($correction_post ? $correction_id : 0) . '"><div class="abhsp-wizard-title"><div><p class="abhsp-eyebrow">INHALTSPFLEGE</p><h3>' . esc_html($form_title) . '</h3><p>' . esc_html($form_intro) . '</p></div>';
         if ($edit_post) echo '<a class="abhsp-text-link" href="' . esc_url(remove_query_arg(array('abhsp_edit','abhsp_sent'), get_permalink())) . '">Abbrechen</a>';
         echo '</div><div class="abhsp-progress" aria-live="polite"><div class="abhsp-progress-track"><span class="abhsp-progress-fill"></span></div><p class="abhsp-progress-label">Schritt 1 von 3 · Inhalt auswählen</p></div>';
         echo '<div class="abhsp-wizard-step" data-step-panel="1"><h3>Was möchten Sie einstellen?</h3><p class="abhsp-step-help">Wir zeigen Ihnen anschließend nur die passenden Eingabefelder.</p>';
-        echo '<label class="abhsp-field" for="abhsp_content_type">Inhaltstyp<select id="abhsp_content_type" name="content_type_select" required ' . ($edit_post ? 'disabled' : '') . '><option value="">Bitte auswählen</option><option value="vehicle" ' . selected($type,'vehicle',false) . '>Fahrzeug für den ABH-Fahrzeugfinder</option><option value="news" ' . selected($type,'news',false) . '>Aktuelles für die Hersteller-Sektion</option></select></label><input type="hidden" name="content_type" value="' . esc_attr($type) . '">';
+        echo '<label class="abhsp-field" for="abhsp_content_type">Inhaltstyp<select id="abhsp_content_type" name="content_type_select" required ' . ($edit_post || $correction_post ? 'disabled' : '') . '><option value="">Bitte auswählen</option><option value="vehicle" ' . selected($type,'vehicle',false) . '>Fahrzeug für den ABH-Fahrzeugfinder</option><option value="news" ' . selected($type,'news',false) . '>Aktuelles für die Hersteller-Sektion</option></select></label><input type="hidden" name="content_type" value="' . esc_attr($type) . '">';
         echo '<div class="abhsp-form-grid"><label class="abhsp-field">Titel<input id="abhsp_title" name="title" required maxlength="120" value="' . esc_attr($prefill['title'] ?? '') . '" placeholder="Zum Beispiel: Kühlfahrzeug auf Basis MAN TGE"><small>Ein klarer Titel hilft Interessenten, Ihr Angebot sofort einzuordnen.</small></label><label class="abhsp-field">Kurzbeschreibung<textarea id="abhsp_summary" name="summary" rows="3" maxlength="500" required placeholder="Was zeichnet Ihr Angebot oder Ihre Neuigkeit aus?">' . esc_textarea($prefill['summary'] ?? '') . '</textarea><small>Fassen Sie den wichtigsten Nutzen in wenigen Sätzen zusammen.</small></label></div></div>';
         echo '<div class="abhsp-wizard-step" data-step-panel="2" hidden><h3>Ergänzen Sie die passenden Informationen</h3><p class="abhsp-step-help">Pflichtangaben sind gekennzeichnet. Nicht zutreffende Felder können Sie überspringen.</p>';
         echo '<fieldset class="abhsp-fieldset abhsp-vehicle-fields" disabled><legend>Fahrzeugdaten</legend><div class="abhsp-form-grid"><label class="abhsp-field">Fahrzeugart<input name="vehicle_type" required placeholder="z. B. Kastenwagen, Pritsche"></label><label class="abhsp-field">Aufbauart<input name="body_type" required placeholder="z. B. Kühlkoffer, Regalsystem"></label><label class="abhsp-field">Einsatzbereich<input name="application" required placeholder="z. B. Lebensmittel- oder Pharmalogistik"></label><label class="abhsp-field">Basisfahrzeug<input name="base_vehicle" placeholder="z. B. MAN TGE"></label><label class="abhsp-field">Standort<input name="location" placeholder="Ort oder PLZ"></label><label class="abhsp-field">Nutzlast<input name="payload" placeholder="z. B. 820 kg"></label><label class="abhsp-field">Verfügbarkeit<select name="availability"><option value="available">Sofort verfügbar</option><option value="on_request">Auf Anfrage</option><option value="preparing">In Vorbereitung</option><option value="reserved">Reserviert</option><option value="sold">Verkauft</option></select></label><label class="abhsp-field">Fahrzeugbild<input type="file" name="vehicle_image" accept="image/jpeg,image/png,image/webp"><small>JPG, PNG oder WebP. Bitte ein aussagekräftiges Querformat wählen.</small></label></div></fieldset>';
@@ -294,7 +322,7 @@ final class ABHSP_Platform {
         echo '<label class="abhsp-field abhsp-details-field">Weitere Informationen<textarea name="details" rows="5" placeholder="Technische Besonderheiten, Zusatzinformationen oder Hinweise. Bitte keine Preise eintragen.">' . esc_textarea($prefill['details'] ?? '') . '</textarea><small>Preise werden nicht veröffentlicht. Interessenten fragen direkt beim Hersteller an.</small></label>';
         echo '<label class="abhsp-check abhsp-feature-home"><input type="checkbox" name="feature_home" value="1" ' . checked(!empty($prefill['feature_home']), true, false) . '> Fahrzeug zusätzlich für die Startseite vormerken <span>(maximal sechs; Auswahl durch ABH)</span></label>';
         echo '<label class="abhsp-check"><input type="checkbox" name="privacy" value="1" required> Ich bestätige, dass die Angaben zur Veröffentlichung freigegeben sind.</label></div>';
-        echo '<div class="abhsp-wizard-actions"><button class="abhsp-button abhsp-step-back" type="button" data-abh-back hidden>← Zurück</button><button class="abhsp-button abhsp-step-next" type="button" data-abh-next>Weiter →</button><button class="abhsp-button abhsp-step-submit" type="submit" hidden>' . esc_html($edit_post ? 'Änderung zur Freigabe senden →' : 'Zur zentralen Freigabe senden →') . '</button></div><p class="abhsp-wizard-footnote">Sie erhalten eine E-Mail, sobald Ihre Einreichung geprüft wurde.</p></form></section>';
+        echo '<div class="abhsp-wizard-actions"><button class="abhsp-button abhsp-step-back" type="button" data-abh-back hidden>← Zurück</button><button class="abhsp-button abhsp-step-next" type="button" data-abh-next>Weiter →</button><button class="abhsp-button abhsp-step-submit" type="submit" hidden>' . esc_html($correction_post ? 'Korrektur erneut einreichen →' : ($edit_post ? 'Änderung zur Freigabe senden →' : 'Zur zentralen Freigabe senden →')) . '</button></div><p class="abhsp-wizard-footnote">Sie erhalten eine E-Mail, sobald Ihre Einreichung geprüft wurde.</p></form></section>';
         return ob_get_clean();
     }
 
@@ -307,12 +335,23 @@ final class ABHSP_Platform {
         $type = sanitize_key(wp_unslash($_POST['content_type'] ?? ''));
         if (!in_array($type, array('vehicle','news'), true)) wp_die('Bitte wählen Sie einen Inhaltstyp.');
         $target_id = absint($_POST['target_id'] ?? 0);
+        $resubmission_id = absint($_POST['resubmission_id'] ?? 0);
+        $resubmission = $resubmission_id ? get_post($resubmission_id) : null;
+        if ($resubmission_id) {
+            if (!$resubmission || $resubmission->post_type !== 'abh_submission' || get_post_meta($resubmission_id, '_abhsp_review_state', true) !== 'changes') wp_die('Diese Korrektur kann nicht mehr bearbeitet werden.');
+            if (!current_user_can('manage_options') && ((int)$resubmission->post_author !== (int)$user->ID || absint(get_post_meta($resubmission_id, '_abhsp_manufacturer_id', true)) !== $manufacturer_id)) wp_die('Sie dürfen diese Korrektur nicht bearbeiten.');
+            if (get_post_meta($resubmission_id, '_abhsp_type', true) !== $type) wp_die('Der Inhaltstyp dieser Korrektur darf nicht geändert werden.');
+            $stored_target_id = absint(get_post_meta($resubmission_id, '_abhsp_target_id', true));
+            if ($target_id !== $stored_target_id) wp_die('Die Zuordnung dieser Korrektur ist ungültig.');
+        }
         $target = $target_id ? get_post($target_id) : null;
         if ($target_id) {
             $expected = $type === 'vehicle' ? 'abh_vehicle' : 'abh_update';
             if (!$target || $target->post_type !== $expected) wp_die('Der ausgewählte Eintrag passt nicht zum Inhaltstyp.');
             if (!current_user_can('manage_options') && absint(get_post_meta($target_id, '_abhsp_manufacturer_id', true)) !== $manufacturer_id) wp_die('Sie dürfen diesen Eintrag nicht bearbeiten.');
         }
+        if (!$manufacturer_id && $resubmission_id) $manufacturer_id = absint(get_post_meta($resubmission_id, '_abhsp_manufacturer_id', true));
+        if (!$manufacturer_id && $target_id) $manufacturer_id = absint(get_post_meta($target_id, '_abhsp_manufacturer_id', true));
         $title = sanitize_text_field(wp_unslash($_POST['title'] ?? ''));
         $summary = sanitize_textarea_field(wp_unslash($_POST['summary'] ?? ''));
         if (!$title || !$summary || empty($_POST['privacy'])) wp_die('Bitte füllen Sie die Pflichtfelder aus und bestätigen Sie die Veröffentlichung.');
@@ -332,7 +371,7 @@ final class ABHSP_Platform {
             $payload['event_location'] = sanitize_text_field(wp_unslash($_POST['event_location'] ?? ''));
             $payload['feature_home'] = 0;
         }
-        $image_id = 0;
+        $image_id = $resubmission_id ? absint(get_post_meta($resubmission_id, '_abhsp_image_id', true)) : 0;
         if ($type === 'vehicle' && !empty($_FILES['vehicle_image']['name'])) {
             require_once ABSPATH . 'wp-admin/includes/file.php';
             require_once ABSPATH . 'wp-admin/includes/media.php';
@@ -340,27 +379,30 @@ final class ABHSP_Platform {
             $image_id = media_handle_upload('vehicle_image', 0);
             if (is_wp_error($image_id)) wp_die('Das Bild konnte nicht hochgeladen werden. Bitte versuchen Sie es erneut.');
         }
-        $submission_id = wp_insert_post(array(
-            'post_type'=>'abh_submission','post_status'=>'pending','post_title'=>$title,
-            'post_content'=>$payload['details'],'post_author'=>$user->ID
-        ), true);
+        if ($resubmission) {
+            $submission_id = wp_update_post(array('ID'=>$resubmission_id,'post_status'=>'pending','post_title'=>$title,'post_content'=>$payload['details']), true);
+        } else {
+            $submission_id = wp_insert_post(array('post_type'=>'abh_submission','post_status'=>'pending','post_title'=>$title,'post_content'=>$payload['details'],'post_author'=>$user->ID), true);
+        }
         if (is_wp_error($submission_id)) wp_die('Die Einreichung konnte nicht gespeichert werden.');
         update_post_meta($submission_id, '_abhsp_type', $type);
-        update_post_meta($submission_id, '_abhsp_manufacturer_id', $manufacturer_id ?: absint(get_post_meta($target_id, '_abhsp_manufacturer_id', true)));
+        update_post_meta($submission_id, '_abhsp_manufacturer_id', $manufacturer_id);
         update_post_meta($submission_id, '_abhsp_target_id', $target_id);
         update_post_meta($submission_id, '_abhsp_action', $target_id ? 'update' : 'create');
         update_post_meta($submission_id, '_abhsp_payload', $payload);
         update_post_meta($submission_id, '_abhsp_summary', $summary);
         update_post_meta($submission_id, '_abhsp_image_id', absint($image_id));
         update_post_meta($submission_id, '_abhsp_review_state', 'pending');
+        delete_post_meta($submission_id, '_abhsp_review_note');
+        $referer = wp_get_referer() ?: home_url('/');
+        update_post_meta($submission_id, '_abhsp_portal_url', remove_query_arg(array('abhsp_edit','abhsp_correct','abhsp_sent'), $referer));
         $moderation = sanitize_email(get_option('abhsp_moderation_email', get_option('admin_email')));
         $review_url = admin_url('admin.php?page=abhsp-review&submission=' . absint($submission_id));
-        $action_label = $target_id ? 'Änderung' : 'Neue Einreichung';
+        $action_label = $resubmission ? 'Korrigierte Einreichung' : ($target_id ? 'Änderung' : 'Neue Einreichung');
         $subject = $action_label . ' zur ABH-Freigabe: ' . $title;
-        $message = '<div style="font-family:Arial,sans-serif;color:#14233f;max-width:640px"><div style="background:#005eab;padding:18px 24px;color:#fff;font-size:18px;font-weight:bold">ABH SOLUTIONS · FREIGABE</div><div style="padding:24px;border:1px solid #e3e9f0"><p>' . esc_html($action_label) . ' wartet auf Prüfung.</p><p><strong>Typ:</strong> ' . esc_html($type === 'vehicle' ? 'Fahrzeug' : 'Aktuelles') . '<br><strong>Hersteller:</strong> ' . esc_html(get_the_title($manufacturer_id ?: absint(get_post_meta($target_id, '_abhsp_manufacturer_id', true)))) . '<br><strong>Titel:</strong> ' . esc_html($title) . '</p><p>' . nl2br(esc_html($summary)) . '</p><p><a style="display:inline-block;background:#005eab;color:#fff;text-decoration:none;padding:12px 18px;font-weight:bold" href="' . esc_url($review_url) . '">Einreichung prüfen</a></p></div></div>';
+        $message = '<div style="font-family:Arial,sans-serif;color:#14233f;max-width:640px"><div style="background:#005eab;padding:18px 24px;color:#fff;font-size:18px;font-weight:bold">ABH SOLUTIONS · FREIGABE</div><div style="padding:24px;border:1px solid #e3e9f0"><p>' . esc_html($action_label) . ' wartet auf Prüfung.</p><p><strong>Typ:</strong> ' . esc_html($type === 'vehicle' ? 'Fahrzeug' : 'Aktuelles') . '<br><strong>Hersteller:</strong> ' . esc_html(get_the_title($manufacturer_id)) . '<br><strong>Titel:</strong> ' . esc_html($title) . '</p><p>' . nl2br(esc_html($summary)) . '</p><p><a style="display:inline-block;background:#005eab;color:#fff;text-decoration:none;padding:12px 18px;font-weight:bold" href="' . esc_url($review_url) . '">Einreichung prüfen</a></p></div></div>';
         $this->send_html_mail($moderation, $subject, $message);
-        $referer = wp_get_referer() ?: home_url('/');
-        $referer = remove_query_arg('abhsp_edit', $referer);
+        $referer = remove_query_arg(array('abhsp_edit','abhsp_correct'), $referer);
         wp_safe_redirect(add_query_arg('abhsp_sent', '1', $referer));
         exit;
     }
@@ -478,8 +520,11 @@ final class ABHSP_Platform {
         $user = get_userdata($submission->post_author);
         if (!$user || !is_email($user->user_email)) return;
         $approved = $state === 'approved';
-        $subject = $approved ? 'Ihre ABH-Einreichung wurde freigegeben' : 'Bitte prüfen Sie Ihre ABH-Einreichung';
-        $body = '<div style="font-family:Arial,sans-serif;color:#14233f"><h2 style="color:#005eab">' . esc_html($subject) . '</h2><p>Guten Tag,</p><p>Ihre Einreichung <strong>' . esc_html($submission->post_title) . '</strong> wurde ' . ($approved ? 'freigegeben und veröffentlicht.' : 'geprüft. Bitte berücksichtigen Sie den folgenden Hinweis:') . '</p>' . ($note ? '<blockquote>' . nl2br(esc_html($note)) . '</blockquote>' : '') . '<p>Viele Grüße<br>Ihr ABH Solutions Team</p></div>';
+        $subject = $approved ? 'Ihre ABH-Einreichung wurde freigegeben' : 'Bitte überarbeiten Sie Ihre ABH-Einreichung';
+        $portal_url = get_post_meta($id, '_abhsp_portal_url', true);
+        $correction_url = $portal_url ? add_query_arg('abhsp_correct', $id, $portal_url) . '#abhsp-neueinreichung' : '';
+        $action = !$approved && $correction_url ? '<p><a style="display:inline-block;background:#005eab;color:#fff;text-decoration:none;padding:12px 18px;font-weight:bold" href="' . esc_url($correction_url) . '">Einreichung im Partnerportal überarbeiten</a></p>' : '';
+        $body = '<div style="font-family:Arial,sans-serif;color:#14233f;max-width:640px"><div style="background:#005eab;padding:18px 24px;color:#fff;font-size:18px;font-weight:bold">ABH SOLUTIONS</div><div style="padding:24px;border:1px solid #e3e9f0"><h2 style="color:#005eab">' . esc_html($subject) . '</h2><p>Guten Tag,</p><p>Ihre Einreichung <strong>' . esc_html($submission->post_title) . '</strong> wurde ' . ($approved ? 'freigegeben und veröffentlicht.' : 'geprüft. Bitte berücksichtigen Sie den folgenden Hinweis:') . '</p>' . ($note ? '<blockquote style="border-left:3px solid #005eab;padding:8px 14px;margin:16px 0;background:#f4f7fb">' . nl2br(esc_html($note)) . '</blockquote>' : '') . $action . '<p>Viele Grüße<br>Ihr ABH Solutions Team</p></div></div>';
         $this->send_html_mail($user->user_email, $subject, $body);
     }
 
