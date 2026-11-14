@@ -831,7 +831,7 @@ final class ABHSP_Platform {
         $this->send_html_mail($user->user_email, $subject, $body);
     }
 
-    private function shortcode_finder($atts) {
+    public function shortcode_finder($atts) {
         $this->assets();
         $filters = array();
         foreach (array('vehicle_type'=>'Fahrzeugart','body_type'=>'Aufbauart','application'=>'Einsatzbereich','manufacturer_id'=>'Aufbauhersteller','base_vehicle'=>'Basisfahrzeug','location'=>'Standort') as $key=>$label) {
