@@ -2,7 +2,7 @@
 
 WordPress plugin for the ABH Solutions vehicle finder, manufacturer news and partner portal.
 
-Current package version: **0.3.0**.
+Current package version: **0.3.1**.
 
 ## Current scope
 
