@@ -987,7 +987,7 @@ final class ABHSP_Platform {
             }
             echo '</select></label>';
         }
-        echo '</div><div class="abhsp-filter-actions"><button class="abhsp-button" type="submit">Fahrzeuge anzeigen</button><a href="' . esc_url(remove_query_arg(array_merge(array_map(function($k){return 'abh_'.$k;}, array_keys($filters)),array('abh_q','abh_sort'))) . '">Filter zurücksetzen</a></div></form>';
+        echo '</div><div class="abhsp-filter-actions"><button class="abhsp-button" type="submit">Fahrzeuge anzeigen</button><a href="' . esc_url(remove_query_arg(array_merge(array_map(function($k){return 'abh_'.$k;}, array_keys($filters)),array('abh_q','abh_sort')))) . '">Filter zurücksetzen</a></div></form>';
         echo '<div class="abhsp-card-grid">';
         if ($query->have_posts()) { while ($query->have_posts()) { $query->the_post(); echo $this->vehicle_card(get_the_ID()); } wp_reset_postdata(); }
         else echo '<div class="abhsp-empty"><h3>Keine passenden Fahrzeuge gefunden</h3><p>Ändern Sie einen Filter oder setzen Sie die Suche zurück.</p></div>';
